@@ -31,6 +31,71 @@ ws_app = None
 running = True
 
 
+def clear_screen():
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+
+def print_header():
+    clear_screen()
+    print("")
+    print("  " + "=" * 46)
+    print("  |                                            |")
+    print("  |          SUPORTE REMOTO TECNICO            |")
+    print("  |                                            |")
+    print("  " + "=" * 46)
+    print("")
+
+
+def print_status(status, id_code=None):
+    print_header()
+
+    if status == "connecting":
+        print("  Status: Conectando ao servidor seguro...")
+        print("")
+        print("  " + "-" * 46)
+        print("  Conexao criptografada SSL/TLS")
+        print("  " + "-" * 46)
+
+    elif status == "waiting":
+        print("  Status: AGUARDANDO OPERADOR")
+        print("")
+        print("  " + "=" * 46)
+        print(f"  |     SEU CODIGO DE ACESSO: {id_code}        |")
+        print("  " + "=" * 46)
+        print("")
+        print("  Informe este codigo ao tecnico de suporte.")
+        print("  Aguardando conexao do operador...")
+        print("")
+        print("  " + "-" * 46)
+        print("  Para encerrar: feche esta janela")
+        print("  " + "-" * 46)
+
+    elif status == "connected":
+        print("  Status: OPERADOR CONECTADO")
+        print("")
+        print("  " + "!" * 46)
+        print("  !  SESSAO DE SUPORTE REMOTO EM ANDAMENTO   !")
+        print("  !  Sua tela esta sendo compartilhada       !")
+        print("  " + "!" * 46)
+        print("")
+        print(f"  Codigo da sessao: {id_code}")
+        print("  Conexao segura: SSL/TLS ativo")
+        print("")
+        print("  " + "-" * 46)
+        print("  Para encerrar: feche esta janela")
+        print("  " + "-" * 46)
+
+    elif status == "disconnected":
+        print("  Status: OPERADOR DESCONECTADO")
+        print("")
+        print(f"  Codigo de acesso: {id_code}")
+        print("  Aguardando reconexao do operador...")
+        print("")
+        print("  " + "-" * 46)
+        print("  Para encerrar: feche esta janela")
+        print("  " + "-" * 46)
+
+
 def get_system_info():
     return {
         "hostname": platform.node(),
@@ -72,13 +137,10 @@ def capture_screen():
                         "height": img.height
                     }))
                     frame_count += 1
-                    if frame_count % 30 == 0:
-                        print(f"Transmitindo... {frame_count} frames")
 
                 time.sleep(FRAME_INTERVAL)
 
             except Exception as e:
-                print(f"Erro na captura: {e}")
                 time.sleep(1)
 
 
@@ -150,7 +212,6 @@ def handle_clipboard_set(data):
     try:
         content = data.get('content', '')
         pyperclip.copy(content)
-        print(f"Clipboard recebido: {content[:30]}...")
     except:
         pass
 
@@ -171,7 +232,6 @@ def handle_file_upload(data):
                 "success": True,
                 "filename": filename
             }))
-        print(f"Arquivo salvo: {filename}")
     except Exception as e:
         if ws_app:
             ws_app.send(json.dumps({
@@ -184,7 +244,7 @@ def handle_file_upload(data):
 
 
 def on_message(ws, message):
-    global client_id, panel_connected
+    global client_id, panel_connected, current_quality, current_scale, running
 
     try:
         data = json.loads(message)
@@ -192,26 +252,15 @@ def on_message(ws, message):
 
         if msg_type == 'registered':
             client_id = data.get('clientId')
-            print("")
-            print("  " + "=" * 41)
-            print(f"       SEU ID DE ACESSO: {client_id}")
-            print("  " + "=" * 41)
-            print("")
-            print("  Compartilhe este ID com o operador")
-            print("  Aguardando conexao do operador...")
-            print("")
+            print_status("waiting", client_id)
 
         elif msg_type == 'panel-connected':
             panel_connected = True
-            print("  [!] Operador CONECTADO - transmitindo tela...")
-            print("")
+            print_status("connected", client_id)
 
         elif msg_type == 'panel-disconnected':
             panel_connected = False
-            print("")
-            print("  [x] Operador DESCONECTADO")
-            print("  Aguardando nova conexao...")
-            print("")
+            print_status("disconnected", client_id)
 
         elif msg_type == 'mouse-move':
             handle_mouse_move(data)
@@ -227,36 +276,36 @@ def on_message(ws, message):
             handle_clipboard_set(data)
         elif msg_type == 'file-upload':
             handle_file_upload(data)
-        elif msg_type == 'disconnect-client':
-            print("Sessao encerrada pelo operador.")
-            running = False
-            os._exit(0)
-
         elif msg_type == 'set-quality':
-            global current_quality, current_scale
             current_quality = data.get('quality', 70)
             current_scale = data.get('scale', 0.75)
-            print(f"Qualidade ajustada: {current_quality}% | Escala: {int(current_scale*100)}%")
+        elif msg_type == 'disconnect-client':
+            print_header()
+            print("  Sessao encerrada pelo operador.")
+            print("")
+            print("  Obrigado por usar nosso suporte!")
+            print("")
+            running = False
+            time.sleep(2)
+            os._exit(0)
 
     except Exception as e:
-        print(f"Erro: {e}")
+        pass
 
 
 def on_error(ws, error):
-    print(f"Erro de conexao: {error}")
+    pass
 
 
 def on_close(ws, close_status_code, close_msg):
     global is_connected, panel_connected
     is_connected = False
     panel_connected = False
-    print("Desconectado do servidor")
 
 
 def on_open(ws):
     global is_connected
     is_connected = True
-    print("Conectado ao servidor!")
     info = get_system_info()
     ws.send(json.dumps({"type": "register-client", **info}))
 
@@ -264,17 +313,7 @@ def on_open(ws):
 def main():
     global ws_app, running
 
-    print("")
-    print("=" * 45)
-    print("           SUPORTE REMOTO ATIVO")
-    print("=" * 45)
-    print("")
-    print("  Conectando ao servidor...")
-    print("")
-    print("  Para ENCERRAR: Feche esta janela")
-    print("                 ou pressione Ctrl+C")
-    print("")
-    print("-" * 45)
+    print_status("connecting")
 
     screen_thread = threading.Thread(target=capture_screen, daemon=True)
     screen_thread.start()
@@ -292,10 +331,8 @@ def main():
 
         except KeyboardInterrupt:
             running = False
-            print("\nEncerrando...")
             break
         except Exception as e:
-            print(f"Reconectando em 5s...")
             time.sleep(5)
 
 
