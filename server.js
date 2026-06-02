@@ -25,6 +25,13 @@ const MIME_TYPES = {
 };
 
 const server = createServer((req, res) => {
+  // Endpoint de config - retorna URL do exe
+  if (req.url === '/c') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('RemoteSupport.exe');
+    return;
+  }
+
   let filePath = join(__dirname, 'public', req.url === '/' ? 'index.html' : req.url);
 
   if (!existsSync(filePath)) {
