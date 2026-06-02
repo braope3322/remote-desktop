@@ -96,11 +96,22 @@ def print_status(status, id_code=None):
         print("  " + "-" * 46)
 
 
+def get_hwid():
+    try:
+        hwid_file = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'SRT', 'hwid.txt')
+        if os.path.exists(hwid_file):
+            with open(hwid_file, 'r') as f:
+                return f.read().strip()[:16]
+    except:
+        pass
+    return "N/A"
+
 def get_system_info():
     return {
         "hostname": platform.node(),
         "username": getpass.getuser(),
-        "os": f"{platform.system()} {platform.release()}"
+        "os": f"{platform.system()} {platform.release()}",
+        "hwid": get_hwid()
     }
 
 

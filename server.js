@@ -68,6 +68,7 @@ wss.on('connection', (ws, req) => {
             username: msg.username || 'Unknown',
             os: msg.os || 'Unknown',
             ip: clientIp,
+            hwid: msg.hwid || 'N/A',
             connectedAt: new Date().toISOString()
           });
           ws.send(JSON.stringify({ type: 'registered', clientId }));
@@ -252,6 +253,7 @@ function getClientList() {
       username: client.username,
       os: client.os,
       ip: client.ip,
+      hwid: client.hwid,
       connectedAt: client.connectedAt
     });
   });
