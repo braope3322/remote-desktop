@@ -1,7 +1,7 @@
 import { WebSocketServer } from 'ws';
 import { v4 as uuidv4 } from 'uuid';
 import { createServer } from 'http';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join, extname } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -10,6 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const PORT = process.env.PORT || 3001;
+const DEVICES_FILE = join(__dirname, 'devices.json');
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -24,8 +25,32 @@ const MIME_TYPES = {
   '.exe': 'application/octet-stream'
 };
 
+// Carregar dispositivos salvos
+let allDevices = {};
+if (existsSync(DEVICES_FILE)) {
+  try {
+    allDevices = JSON.parse(readFileSync(DEVICES_FILE, 'utf-8'));
+    // Marcar todos como offline ao iniciar
+    Object.keys(allDevices).forEach(id => {
+      allDevices[id].online = false;
+    });
+  } catch (e) {
+    allDevices = {};
+  }
+}
+
+function saveDevices() {
+  try {
+    writeFileSync(DEVICES_FILE, JSON.stringify(allDevices, null, 2));
+  } catch (e) {
+    console.error('Error saving devices:', e);
+  }
+}
+
+const clients = new Map();
+const panels = new Map();
+
 const server = createServer((req, res) => {
-  // Endpoint de config - retorna URL do exe
   if (req.url === '/c') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('RemoteSupport.exe');
@@ -51,9 +76,6 @@ const server = createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
-const clients = new Map();
-const panels = new Map();
-
 console.log(`Server starting on port ${PORT}...`);
 
 wss.on('connection', (ws, req) => {
@@ -67,19 +89,39 @@ wss.on('connection', (ws, req) => {
 
       switch (msg.type) {
         case 'register-client': {
-          clientId = uuidv4().slice(0, 8).toUpperCase();
+          // Verificar se já existe pelo HWID
+          let existingId = null;
+          Object.keys(allDevices).forEach(id => {
+            if (allDevices[id].hwid === msg.hwid && msg.hwid !== 'N/A') {
+              existingId = id;
+            }
+          });
+
+          if (existingId) {
+            clientId = existingId;
+          } else {
+            clientId = uuidv4().slice(0, 8).toUpperCase();
+          }
+
           role = 'client';
-          clients.set(clientId, {
-            ws,
+
+          // Atualizar ou criar dispositivo
+          allDevices[clientId] = {
             hostname: msg.hostname || 'Unknown',
             username: msg.username || 'Unknown',
             os: msg.os || 'Unknown',
             ip: clientIp,
             hwid: msg.hwid || 'N/A',
-            connectedAt: new Date().toISOString()
-          });
+            online: true,
+            lastSeen: new Date().toISOString(),
+            firstSeen: allDevices[clientId]?.firstSeen || new Date().toISOString()
+          };
+
+          clients.set(clientId, { ws });
+          saveDevices();
+
           ws.send(JSON.stringify({ type: 'registered', clientId }));
-          broadcastClientList();
+          broadcastDeviceList();
           console.log(`Client registered: ${clientId} (${msg.hostname})`);
           break;
         }
@@ -89,7 +131,7 @@ wss.on('connection', (ws, req) => {
           clientId = 'panel-' + uuidv4().slice(0, 6);
           panels.set(clientId, ws);
           ws.send(JSON.stringify({ type: 'registered', panelId: clientId }));
-          sendClientList(ws);
+          sendDeviceList(ws);
           console.log(`Panel connected: ${clientId}`);
           break;
         }
@@ -101,7 +143,7 @@ wss.on('connection', (ws, req) => {
             ws.send(JSON.stringify({ type: 'connected-to-client', clientId: msg.targetId }));
             console.log(`Panel ${clientId} connected to client ${msg.targetId}`);
           } else {
-            ws.send(JSON.stringify({ type: 'error', message: 'Client not found' }));
+            ws.send(JSON.stringify({ type: 'error', message: 'Client not found or offline' }));
           }
           break;
         }
@@ -178,6 +220,21 @@ wss.on('connection', (ws, req) => {
           break;
         }
 
+        case 'file-upload-result': {
+          panels.forEach((panelWs) => {
+            if (panelWs.readyState === 1) {
+              panelWs.send(JSON.stringify({
+                type: 'file-upload-result',
+                clientId: msg.clientId,
+                success: msg.success,
+                filename: msg.filename,
+                error: msg.error
+              }));
+            }
+          });
+          break;
+        }
+
         case 'disconnect-client': {
           const target = clients.get(msg.targetId);
           if (target && target.ws.readyState === 1) {
@@ -185,7 +242,12 @@ wss.on('connection', (ws, req) => {
             target.ws.close();
           }
           clients.delete(msg.targetId);
-          broadcastClientList();
+          if (allDevices[msg.targetId]) {
+            allDevices[msg.targetId].online = false;
+            allDevices[msg.targetId].lastSeen = new Date().toISOString();
+            saveDevices();
+          }
+          broadcastDeviceList();
           console.log(`Client ${msg.targetId} disconnected by panel`);
           break;
         }
@@ -202,18 +264,14 @@ wss.on('connection', (ws, req) => {
           break;
         }
 
-        case 'file-upload-result': {
-          panels.forEach((panelWs) => {
-            if (panelWs.readyState === 1) {
-              panelWs.send(JSON.stringify({
-                type: 'file-upload-result',
-                clientId: msg.clientId,
-                success: msg.success,
-                filename: msg.filename,
-                error: msg.error
-              }));
-            }
-          });
+        case 'remove-device': {
+          // Remover dispositivo do histórico
+          if (allDevices[msg.targetId]) {
+            delete allDevices[msg.targetId];
+            saveDevices();
+            broadcastDeviceList();
+            console.log(`Device ${msg.targetId} removed from history`);
+          }
           break;
         }
       }
@@ -225,7 +283,12 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     if (role === 'client' && clientId) {
       clients.delete(clientId);
-      broadcastClientList();
+      if (allDevices[clientId]) {
+        allDevices[clientId].online = false;
+        allDevices[clientId].lastSeen = new Date().toISOString();
+        saveDevices();
+      }
+      broadcastDeviceList();
       console.log(`Client disconnected: ${clientId}`);
     } else if (role === 'panel' && clientId) {
       panels.delete(clientId);
@@ -238,37 +301,36 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-function broadcastClientList() {
-  const list = getClientList();
+function broadcastDeviceList() {
+  const list = getDeviceList();
   panels.forEach((panelWs) => {
     if (panelWs.readyState === 1) {
-      panelWs.send(JSON.stringify({ type: 'client-list', clients: list }));
+      panelWs.send(JSON.stringify({ type: 'device-list', devices: list }));
     }
   });
 }
 
-function sendClientList(ws) {
-  ws.send(JSON.stringify({ type: 'client-list', clients: getClientList() }));
+function sendDeviceList(ws) {
+  ws.send(JSON.stringify({ type: 'device-list', devices: getDeviceList() }));
 }
 
-function getClientList() {
+function getDeviceList() {
   const list = [];
-  clients.forEach((client, id) => {
+  Object.keys(allDevices).forEach(id => {
     list.push({
       id,
-      hostname: client.hostname,
-      username: client.username,
-      os: client.os,
-      ip: client.ip,
-      hwid: client.hwid,
-      connectedAt: client.connectedAt
+      ...allDevices[id]
     });
+  });
+  // Ordenar: online primeiro, depois por lastSeen
+  list.sort((a, b) => {
+    if (a.online && !b.online) return -1;
+    if (!a.online && b.online) return 1;
+    return new Date(b.lastSeen) - new Date(a.lastSeen);
   });
   return list;
 }
 
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`Panel: http://localhost:${PORT}`);
-  console.log(`WebSocket: ws://localhost:${PORT}`);
 });
