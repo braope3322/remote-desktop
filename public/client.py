@@ -188,18 +188,25 @@ def on_message(ws, message):
         if msg_type == 'registered':
             client_id = data.get('clientId')
             print("")
-            print(f"  SEU ID: {client_id}")
+            print("  " + "=" * 41)
+            print(f"       SEU ID DE ACESSO: {client_id}")
+            print("  " + "=" * 41)
             print("")
             print("  Compartilhe este ID com o operador")
+            print("  Aguardando conexao do operador...")
             print("")
 
         elif msg_type == 'panel-connected':
             panel_connected = True
-            print("Operador conectado - transmitindo tela...")
+            print("  [!] Operador CONECTADO - transmitindo tela...")
+            print("")
 
         elif msg_type == 'panel-disconnected':
             panel_connected = False
-            print("Operador desconectado")
+            print("")
+            print("  [x] Operador DESCONECTADO")
+            print("  Aguardando nova conexao...")
+            print("")
 
         elif msg_type == 'mouse-move':
             handle_mouse_move(data)
@@ -215,6 +222,10 @@ def on_message(ws, message):
             handle_clipboard_set(data)
         elif msg_type == 'file-upload':
             handle_file_upload(data)
+        elif msg_type == 'disconnect-client':
+            print("Sessao encerrada pelo operador.")
+            running = False
+            os._exit(0)
 
     except Exception as e:
         print(f"Erro: {e}")
@@ -242,11 +253,17 @@ def on_open(ws):
 def main():
     global ws_app, running
 
-    print("=" * 40)
-    print("        SUPORTE REMOTO ATIVO")
-    print("=" * 40)
-    print(f"Conectando...")
-    print()
+    print("")
+    print("=" * 45)
+    print("           SUPORTE REMOTO ATIVO")
+    print("=" * 45)
+    print("")
+    print("  Conectando ao servidor...")
+    print("")
+    print("  Para ENCERRAR: Feche esta janela")
+    print("                 ou pressione Ctrl+C")
+    print("")
+    print("-" * 45)
 
     screen_thread = threading.Thread(target=capture_screen, daemon=True)
     screen_thread.start()

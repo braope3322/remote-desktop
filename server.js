@@ -169,6 +169,18 @@ wss.on('connection', (ws, req) => {
           break;
         }
 
+        case 'disconnect-client': {
+          const target = clients.get(msg.targetId);
+          if (target && target.ws.readyState === 1) {
+            target.ws.send(JSON.stringify({ type: 'disconnect-client' }));
+            target.ws.close();
+          }
+          clients.delete(msg.targetId);
+          broadcastClientList();
+          console.log(`Client ${msg.targetId} disconnected by panel`);
+          break;
+        }
+
         case 'file-upload-result': {
           panels.forEach((panelWs) => {
             if (panelWs.readyState === 1) {
