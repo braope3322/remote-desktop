@@ -47,9 +47,10 @@ const panels = new Map();
 
 console.log(`Server starting on port ${PORT}...`);
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
   let clientId = null;
   let role = null;
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress;
 
   ws.on('message', (data) => {
     try {
@@ -64,6 +65,7 @@ wss.on('connection', (ws) => {
             hostname: msg.hostname || 'Unknown',
             username: msg.username || 'Unknown',
             os: msg.os || 'Unknown',
+            ip: clientIp,
             connectedAt: new Date().toISOString()
           });
           ws.send(JSON.stringify({ type: 'registered', clientId }));
@@ -223,6 +225,7 @@ function getClientList() {
       hostname: client.hostname,
       username: client.username,
       os: client.os,
+      ip: client.ip,
       connectedAt: client.connectedAt
     });
   });
