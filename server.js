@@ -181,6 +181,18 @@ wss.on('connection', (ws, req) => {
           break;
         }
 
+        case 'set-quality': {
+          const target = clients.get(msg.targetId);
+          if (target && target.ws.readyState === 1) {
+            target.ws.send(JSON.stringify({
+              type: 'set-quality',
+              quality: msg.quality,
+              scale: msg.scale
+            }));
+          }
+          break;
+        }
+
         case 'file-upload-result': {
           panels.forEach((panelWs) => {
             if (panelWs.readyState === 1) {

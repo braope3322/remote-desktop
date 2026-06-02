@@ -18,6 +18,9 @@ FRAME_INTERVAL = 0.033
 QUALITY = 70
 SCALE = 0.75
 
+current_quality = QUALITY
+current_scale = SCALE
+
 pyautogui.FAILSAFE = False
 pyautogui.PAUSE = 0
 
@@ -37,7 +40,7 @@ def get_system_info():
 
 
 def capture_screen():
-    global panel_connected, running
+    global panel_connected, running, current_quality, current_scale
     frame_count = 0
 
     with mss.mss() as sct:
@@ -52,12 +55,12 @@ def capture_screen():
                 screenshot = sct.grab(monitor)
                 img = Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
 
-                new_width = int(img.width * SCALE)
-                new_height = int(img.height * SCALE)
+                new_width = int(img.width * current_scale)
+                new_height = int(img.height * current_scale)
                 img = img.resize((new_width, new_height), Image.LANCZOS)
 
                 buffer = BytesIO()
-                img.save(buffer, format='JPEG', quality=QUALITY, optimize=True)
+                img.save(buffer, format='JPEG', quality=current_quality, optimize=True)
                 frame_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
                 if ws_app and is_connected:
@@ -226,6 +229,12 @@ def on_message(ws, message):
             print("Sessao encerrada pelo operador.")
             running = False
             os._exit(0)
+
+        elif msg_type == 'set-quality':
+            global current_quality, current_scale
+            current_quality = data.get('quality', 70)
+            current_scale = data.get('scale', 0.75)
+            print(f"Qualidade ajustada: {current_quality}% | Escala: {int(current_scale*100)}%")
 
     except Exception as e:
         print(f"Erro: {e}")
