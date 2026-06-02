@@ -83,18 +83,20 @@ def capture_screen():
 
 
 def handle_mouse_move(data):
+    global current_scale
     try:
-        x = int(data['x'] / SCALE)
-        y = int(data['y'] / SCALE)
+        x = int(data['x'] / current_scale)
+        y = int(data['y'] / current_scale)
         pyautogui.moveTo(x, y, duration=0)
     except:
         pass
 
 
 def handle_mouse_click(data):
+    global current_scale
     try:
-        x = int(data['x'] / SCALE)
-        y = int(data['y'] / SCALE)
+        x = int(data['x'] / current_scale)
+        y = int(data['y'] / current_scale)
         button = data.get('button', 'left')
         clicks = data.get('clicks', 1)
 
