@@ -20,7 +20,8 @@ const MIME_TYPES = {
   '.jpg': 'image/jpeg',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
-  '.py': 'text/plain'
+  '.py': 'text/plain',
+  '.exe': 'application/octet-stream'
 };
 
 const server = createServer((req, res) => {
