@@ -1,0 +1,40 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'public/client.py'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller websocket-client mss pyautogui Pillow pyperclip
+
+      - name: Build EXE
+        run: |
+          pyinstaller --onefile --noconsole --name RemoteSupport public/client.py
+
+      - name: Move EXE to public
+        run: |
+          copy dist\RemoteSupport.exe public\RemoteSupport.exe
+
+      - name: Commit and push EXE
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add public/RemoteSupport.exe
+          git commit -m "Build RemoteSupport.exe" || echo "No changes"
+          git push
