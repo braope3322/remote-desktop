@@ -41,26 +41,6 @@ input_blocked = False
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 
-# BlockInput - bloqueia input local
-def block_input(block):
-    try:
-        user32.BlockInput(block)
-    except:
-        pass
-
-def remote_command(func):
-    """Decorator para permitir comandos remotos mesmo com input bloqueado"""
-    def wrapper(*args, **kwargs):
-        was_blocked = input_blocked
-        if was_blocked:
-            block_input(False)
-        try:
-            result = func(*args, **kwargs)
-        finally:
-            if was_blocked:
-                block_input(True)
-        return result
-    return wrapper
 
 
 def set_console_title(title):
@@ -141,7 +121,6 @@ def show_lock_screen(message):
 
     screen_locked = True
     input_blocked = True
-    block_input(True)  # Bloqueia input local
 
     def run_lock():
         global screen_locked, input_blocked
@@ -191,7 +170,6 @@ def hide_lock_screen():
     global screen_locked, input_blocked
     screen_locked = False
     input_blocked = False
-    block_input(False)  # Desbloqueia input local
 
 
 # ============================================
@@ -230,50 +208,40 @@ def capture_screen():
 
 
 # ============================================
-# HANDLERS - Desbloqueiam temporariamente para comandos remotos
+# HANDLERS
 # ============================================
 
 def handle_mouse_move(d):
     try:
-        if input_blocked: block_input(False)
         pyautogui.moveTo(int(d['x']/current_scale), int(d['y']/current_scale), duration=0)
-        if input_blocked: block_input(True)
     except: pass
 
 def handle_mouse_click(d):
     try:
-        if input_blocked: block_input(False)
         x, y = int(d['x']/current_scale), int(d['y']/current_scale)
         btn = d.get('button', 'left')
         if btn == 'right': pyautogui.click(x, y, button='right')
         elif btn == 'middle': pyautogui.click(x, y, button='middle')
         else: pyautogui.click(x, y, clicks=d.get('clicks', 1))
-        if input_blocked: block_input(True)
     except: pass
 
 def handle_mouse_scroll(d):
     try:
-        if input_blocked: block_input(False)
         pyautogui.scroll(d.get('delta', 0))
-        if input_blocked: block_input(True)
     except: pass
 
 def handle_key_press(d):
     try:
-        if input_blocked: block_input(False)
         k = d.get('key', '')
         m = {'Enter':'enter','Backspace':'backspace','Tab':'tab','Escape':'escape','ArrowUp':'up','ArrowDown':'down','ArrowLeft':'left','ArrowRight':'right','Delete':'delete','Home':'home','End':'end','PageUp':'pageup','PageDown':'pagedown',' ':'space'}
         for i in range(1,13): m[f'F{i}'] = f'f{i}'
         pyautogui.press(m.get(k, k))
-        if input_blocked: block_input(True)
     except: pass
 
 def handle_key_combination(d):
     try:
-        if input_blocked: block_input(False)
         m = {'Control':'ctrl','Alt':'alt','Shift':'shift','Meta':'win'}
         pyautogui.hotkey(*[m.get(k, k.lower()) for k in d.get('keys', [])])
-        if input_blocked: block_input(True)
     except: pass
 
 def handle_clipboard_set(d):
