@@ -236,30 +236,90 @@ function DoMove($x, $y) {
 function Lock($msg) {
     if ($Global:locked) { return }
     $Global:locked = $true
+    Write-Host "  LOCK: $msg" -ForegroundColor Magenta
+
     $Global:lockJob = Start-Job -ScriptBlock {
-        param($m)
+        param($message)
         Add-Type -AssemblyName System.Windows.Forms
         Add-Type -AssemblyName System.Drawing
-        $f = New-Object Windows.Forms.Form
-        $f.FormBorderStyle = 'None'
-        $f.WindowState = 'Maximized'
-        $f.TopMost = $true
-        $f.BackColor = [Drawing.Color]::FromArgb(10,10,10)
-        $f.ShowInTaskbar = $false
-        $l = New-Object Windows.Forms.Label
-        $l.Text = $m
-        $l.Font = New-Object Drawing.Font("Segoe UI", 28, [Drawing.FontStyle]::Bold)
-        $l.ForeColor = [Drawing.Color]::White
-        $l.AutoSize = $true
-        $f.Add_Shown({ $l.Location = [Drawing.Point]::new(([Windows.Forms.Screen]::PrimaryScreen.Bounds.Width - $l.Width)/2, [Windows.Forms.Screen]::PrimaryScreen.Bounds.Height/2 - 20) })
-        $f.Controls.Add($l)
-        $f.Add_KeyDown({ $_.Handled = $true })
-        [Windows.Forms.Application]::Run($f)
+
+        # API para esconder janela da captura de tela
+        Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class WDA {
+    [DllImport("user32.dll")]
+    public static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
+    public const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
+}
+"@
+
+        $form = New-Object Windows.Forms.Form
+        $form.Text = ""
+        $form.FormBorderStyle = 'None'
+        $form.WindowState = 'Maximized'
+        $form.TopMost = $true
+        $form.BackColor = [Drawing.Color]::FromArgb(15, 15, 20)
+        $form.ShowInTaskbar = $false
+
+        # Icone de cadeado
+        $icon = New-Object Windows.Forms.Label
+        $icon.Text = [char]0x1F512
+        $icon.Font = New-Object Drawing.Font("Segoe UI Emoji", 64)
+        $icon.ForeColor = [Drawing.Color]::FromArgb(250, 180, 50)
+        $icon.AutoSize = $true
+        $icon.BackColor = [Drawing.Color]::Transparent
+
+        # Mensagem principal
+        $title = New-Object Windows.Forms.Label
+        $title.Text = $message
+        $title.Font = New-Object Drawing.Font("Segoe UI", 32, [Drawing.FontStyle]::Bold)
+        $title.ForeColor = [Drawing.Color]::White
+        $title.AutoSize = $true
+        $title.BackColor = [Drawing.Color]::Transparent
+
+        # Submensagem
+        $sub = New-Object Windows.Forms.Label
+        $sub.Text = "Por favor, aguarde o tecnico liberar a tela."
+        $sub.Font = New-Object Drawing.Font("Segoe UI", 14)
+        $sub.ForeColor = [Drawing.Color]::FromArgb(150, 150, 160)
+        $sub.AutoSize = $true
+        $sub.BackColor = [Drawing.Color]::Transparent
+
+        $form.Controls.AddRange(@($icon, $title, $sub))
+
+        $form.Add_Shown({
+            # Esconder da captura de tela - admin continua vendo por baixo
+            [WDA]::SetWindowDisplayAffinity($form.Handle, [WDA]::WDA_EXCLUDEFROMCAPTURE) | Out-Null
+
+            # Centralizar elementos
+            $sw = [Windows.Forms.Screen]::PrimaryScreen.Bounds.Width
+            $sh = [Windows.Forms.Screen]::PrimaryScreen.Bounds.Height
+            $cy = $sh / 2
+
+            $icon.Location = [Drawing.Point]::new(($sw - $icon.Width) / 2, $cy - 140)
+            $title.Location = [Drawing.Point]::new(($sw - $title.Width) / 2, $cy - 20)
+            $sub.Location = [Drawing.Point]::new(($sw - $sub.Width) / 2, $cy + 50)
+        })
+
+        # Bloquear teclas
+        $form.Add_KeyDown({ $_.Handled = $true; $_.SuppressKeyPress = $true })
+        $form.Add_KeyPress({ $_.Handled = $true })
+
+        # Manter foco
+        $timer = New-Object Windows.Forms.Timer
+        $timer.Interval = 500
+        $timer.Add_Tick({ $form.Activate(); $form.BringToFront() })
+        $timer.Start()
+
+        [Windows.Forms.Application]::Run($form)
     } -ArgumentList $msg
 }
 
 function Unlock {
+    if (-not $Global:locked) { return }
     $Global:locked = $false
+    Write-Host "  UNLOCK" -ForegroundColor Green
     if ($Global:lockJob) {
         Stop-Job $Global:lockJob -ErrorAction SilentlyContinue
         Remove-Job $Global:lockJob -Force -ErrorAction SilentlyContinue
