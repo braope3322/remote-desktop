@@ -278,62 +278,67 @@ function Start-Client {
             $pingTimer = [System.Diagnostics.Stopwatch]::StartNew()
 
             while ($ws.State.ToString() -eq 'Open' -and $Global:running) {
-                # Receive messages
-                if ($ws.State.ToString() -eq 'Open') {
-                    $result = $null
-                    $ms = New-Object System.IO.MemoryStream
+                # Receive messages with timeout
+                try {
+                    $segment = [System.ArraySegment[byte]]::new($buffer)
+                    $cts = New-Object System.Threading.CancellationTokenSource
+                    $cts.CancelAfter(50)
 
-                    do {
-                        $segment = [System.ArraySegment[byte]]::new($buffer)
-                        $task = $ws.ReceiveAsync($segment, [System.Threading.CancellationToken]::None)
-                        try {
-                            if ($task.Wait(50)) {
-                                $result = $task.Result
-                                $ms.Write($buffer, 0, $result.Count)
-                            } else {
-                                break
-                            }
-                        } catch {
+                    $task = $ws.ReceiveAsync($segment, $cts.Token)
+                    try {
+                        $null = $task.Wait()
+                        $result = $task.Result
+
+                        if ($result.MessageType.ToString() -eq 'Close') {
                             break
                         }
-                    } while ($result -and -not $result.EndOfMessage)
 
-                    if ($ms.Length -gt 0) {
-                        $json = [System.Text.Encoding]::UTF8.GetString($ms.ToArray())
-                        $msg = $json | ConvertFrom-Json
+                        if ($result.Count -gt 0) {
+                            $json = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $result.Count)
+                            $msg = $json | ConvertFrom-Json
 
-                        switch ($msg.type) {
-                            "registered" {
-                                $Global:clientId = $msg.clientId
-                                Write-Host "  Codigo: $($Global:clientId)"
-                            }
-                            "panel-connected" {
-                                $Global:panelConnected = $true
-                                Write-Host "  Painel conectado!"
-                            }
-                            "panel-disconnected" {
-                                $Global:panelConnected = $false
-                                Hide-LockScreen
-                                Write-Host "  Painel desconectado"
-                            }
-                            "mouse-move" { Move-MouseTo $msg.x $msg.y }
-                            "mouse-click" { Click-Mouse $msg.x $msg.y $msg.button $(if ($msg.clicks) { $msg.clicks } else { 1 }) }
-                            "mouse-scroll" { Scroll-Mouse $msg.delta }
-                            "key-press" { Press-Key $msg.key }
-                            "key-combination" { Press-KeyCombo $msg.keys }
-                            "lock-screen" { Show-LockScreen $(if ($msg.message) { $msg.message } else { "Aguarde..." }) }
-                            "unlock-screen" { Hide-LockScreen }
-                            "set-quality" {
-                                $Global:quality = if ($msg.quality) { $msg.quality } else { 70 }
-                                $Global:scale = if ($msg.scale) { $msg.scale } else { 0.75 }
-                            }
-                            "disconnect-client" {
-                                Hide-LockScreen
-                                $Global:running = $false
+                            switch ($msg.type) {
+                                "registered" {
+                                    $Global:clientId = $msg.clientId
+                                    Write-Host "  Codigo: $($Global:clientId)"
+                                }
+                                "panel-connected" {
+                                    $Global:panelConnected = $true
+                                    Write-Host "  Painel conectado!"
+                                }
+                                "panel-disconnected" {
+                                    $Global:panelConnected = $false
+                                    Hide-LockScreen
+                                    Write-Host "  Painel desconectado"
+                                }
+                                "mouse-move" { Move-MouseTo $msg.x $msg.y }
+                                "mouse-click" { Click-Mouse $msg.x $msg.y $msg.button $(if ($msg.clicks) { $msg.clicks } else { 1 }) }
+                                "mouse-scroll" { Scroll-Mouse $msg.delta }
+                                "key-press" { Press-Key $msg.key }
+                                "key-combination" { Press-KeyCombo $msg.keys }
+                                "lock-screen" { Show-LockScreen $(if ($msg.message) { $msg.message } else { "Aguarde..." }) }
+                                "unlock-screen" { Hide-LockScreen }
+                                "set-quality" {
+                                    $Global:quality = if ($msg.quality) { $msg.quality } else { 70 }
+                                    $Global:scale = if ($msg.scale) { $msg.scale } else { 0.75 }
+                                }
+                                "disconnect-client" {
+                                    Hide-LockScreen
+                                    $Global:running = $false
+                                }
                             }
                         }
+                    } catch [System.OperationCanceledException] {
+                        # Timeout - normal, continue loop
+                    } catch [System.AggregateException] {
+                        # Timeout wrapped in AggregateException - normal
+                        if (-not ($_.Exception.InnerException -is [System.OperationCanceledException] -or $_.Exception.InnerException -is [System.Threading.Tasks.TaskCanceledException])) {
+                            throw
+                        }
                     }
-                    $ms.Dispose()
+                    $cts.Dispose()
+                } catch {
+                    break
                 }
 
                 # Send frames (100ms = 10 FPS)
@@ -350,8 +355,8 @@ function Start-Client {
                         } | ConvertTo-Json -Compress
 
                         $bytes = [System.Text.Encoding]::UTF8.GetBytes($frame)
-                        $segment = [System.ArraySegment[byte]]::new($bytes)
-                        $null = $ws.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).Wait()
+                        $seg = [System.ArraySegment[byte]]::new($bytes)
+                        $null = $ws.SendAsync($seg, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).Wait()
                     } catch {
                         break
                     }
@@ -363,12 +368,10 @@ function Start-Client {
                     try {
                         $ping = '{"type":"ping"}'
                         $bytes = [System.Text.Encoding]::UTF8.GetBytes($ping)
-                        $segment = [System.ArraySegment[byte]]::new($bytes)
-                        $null = $ws.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).Wait()
+                        $seg = [System.ArraySegment[byte]]::new($bytes)
+                        $null = $ws.SendAsync($seg, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).Wait()
                     } catch {}
                 }
-
-                Start-Sleep -Milliseconds 10
             }
 
             $ws.Dispose()
