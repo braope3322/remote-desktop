@@ -2,15 +2,17 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Monitor, Search, LogOut, Wifi, WifiOff,
-  Grid, List, RefreshCw, Settings, Users
+  Grid, List, RefreshCw, Settings, Users, Lock
 } from 'lucide-react';
 import { DeviceCard } from './DeviceCard';
+import { LockScreenManager } from './LockScreenManager';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { cn } from '../lib/utils';
 
 export function Dashboard({ token, username, onLogout }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState('list');
+  const [showLockManager, setShowLockManager] = useState(false);
 
   const {
     connected,
@@ -72,6 +74,13 @@ export function Dashboard({ token, username, onLogout }) {
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowLockManager(true)}
+              className="p-2 hover:bg-white/10 rounded-xl text-white/50 hover:text-white transition-colors"
+              title="Telas de Bloqueio"
+            >
+              <Lock className="w-5 h-5" />
+            </button>
             <span className="text-white/50 text-sm">{username}</span>
             <button
               onClick={handleLogout}
@@ -208,6 +217,12 @@ export function Dashboard({ token, username, onLogout }) {
         )}
       </main>
 
+      {/* Lock Screen Manager Modal */}
+      <AnimatePresence>
+        {showLockManager && (
+          <LockScreenManager onClose={() => setShowLockManager(false)} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

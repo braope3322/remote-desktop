@@ -173,6 +173,7 @@ const JWT_SECRET = 'RD_JWT_Secret_Key_2026_FIXED_abc123xyz789';
 
 const DEVICES_FILE = join(__dirname, 'devices.json');
 const USERS_FILE = join(__dirname, 'users.json');
+const LOCKSCREENS_FILE = join(__dirname, 'lockscreens.json');
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -210,6 +211,39 @@ if (Object.keys(users).length === 0) {
   };
   saveUsers();
   console.log('Admin criado: admin / admin123');
+}
+
+// Lock Screens
+let lockScreens = [];
+if (existsSync(LOCKSCREENS_FILE)) {
+  try {
+    lockScreens = JSON.parse(readFileSync(LOCKSCREENS_FILE, 'utf-8'));
+  } catch (e) { lockScreens = []; }
+}
+
+if (lockScreens.length === 0) {
+  lockScreens = [
+    {
+      id: 'default',
+      name: 'Padrao - Suporte Tecnico',
+      html: `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>*{margin:0;padding:0;box-sizing:border-box}body{background:linear-gradient(135deg,#0a0a0f 0%,#1a1a2e 50%,#0a0a0f 100%);height:100vh;display:flex;align-items:center;justify-content:center;font-family:'Segoe UI',Arial,sans-serif;color:white;overflow:hidden}.container{text-align:center}h1{font-size:48px;font-weight:300;margin-bottom:20px}p{font-size:18px;color:rgba(255,255,255,0.6)}.spinner{width:50px;height:50px;border:3px solid rgba(255,255,255,0.1);border-top-color:#3b82f6;border-radius:50%;margin:30px auto;animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="container"><h1>Aguarde o tecnico...</h1><div class="spinner"></div><p>Por favor, aguarde o tecnico liberar a tela.</p></div></body></html>`
+    },
+    {
+      id: 'manutencao',
+      name: 'Manutencao do Sistema',
+      html: `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>*{margin:0;padding:0;box-sizing:border-box}body{background:linear-gradient(135deg,#1e3a5f 0%,#0d1b2a 100%);height:100vh;display:flex;align-items:center;justify-content:center;font-family:'Segoe UI',Arial,sans-serif;color:white;overflow:hidden}.container{text-align:center}.icon{font-size:80px;margin-bottom:30px}h1{font-size:42px;font-weight:300;margin-bottom:15px}p{font-size:16px;color:rgba(255,255,255,0.5)}.progress{width:300px;height:4px;background:rgba(255,255,255,0.1);border-radius:2px;margin:30px auto;overflow:hidden}.progress-bar{height:100%;background:linear-gradient(90deg,#3b82f6,#8b5cf6);animation:loading 2s ease-in-out infinite}@keyframes loading{0%{width:0;margin-left:0}50%{width:100%;margin-left:0}100%{width:0;margin-left:100%}}</style></head><body><div class="container"><div class="icon">🔧</div><h1>Manutencao em Andamento</h1><div class="progress"><div class="progress-bar"></div></div><p>O sistema esta sendo atualizado. Por favor aguarde.</p></div></body></html>`
+    },
+    {
+      id: 'bloqueado',
+      name: 'Computador Bloqueado',
+      html: `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>*{margin:0;padding:0;box-sizing:border-box}body{background:linear-gradient(135deg,#2d1f3d 0%,#1a1a2e 100%);height:100vh;display:flex;align-items:center;justify-content:center;font-family:'Segoe UI',Arial,sans-serif;color:white;overflow:hidden}.container{text-align:center}.lock{font-size:100px;margin-bottom:30px;animation:pulse 2s ease-in-out infinite}h1{font-size:36px;font-weight:300;margin-bottom:15px}p{font-size:16px;color:rgba(255,255,255,0.5)}@keyframes pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.1);opacity:0.8}}</style></head><body><div class="container"><div class="lock">🔒</div><h1>Computador Bloqueado</h1><p>Este computador foi bloqueado pelo administrador.</p></div></body></html>`
+    }
+  ];
+  saveLockScreens();
+}
+
+function saveLockScreens() {
+  try { writeFileSync(LOCKSCREENS_FILE, JSON.stringify(lockScreens, null, 2)); } catch (e) {}
 }
 
 function saveDevices() {
@@ -268,6 +302,81 @@ const server = createServer((req, res) => {
         res.end(JSON.stringify({ valid: false }));
       }
     });
+    return;
+  }
+
+  // Lock Screens - Listar
+  if (req.url === '/api/lockscreens' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(lockScreens));
+    return;
+  }
+
+  // Lock Screens - Criar
+  if (req.url === '/api/lockscreens' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { name, html } = JSON.parse(body);
+        if (!name || !html) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'name e html sao obrigatorios' }));
+          return;
+        }
+        const id = 'ls_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+        lockScreens.push({ id, name, html });
+        saveLockScreens();
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ id, name }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'JSON invalido' }));
+      }
+    });
+    return;
+  }
+
+  // Lock Screens - Atualizar
+  if (req.url.startsWith('/api/lockscreens/') && req.method === 'PUT') {
+    const id = req.url.split('/')[3];
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { name, html } = JSON.parse(body);
+        const idx = lockScreens.findIndex(ls => ls.id === id);
+        if (idx === -1) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Lock screen nao encontrado' }));
+          return;
+        }
+        if (name) lockScreens[idx].name = name;
+        if (html) lockScreens[idx].html = html;
+        saveLockScreens();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(lockScreens[idx]));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'JSON invalido' }));
+      }
+    });
+    return;
+  }
+
+  // Lock Screens - Deletar
+  if (req.url.startsWith('/api/lockscreens/') && req.method === 'DELETE') {
+    const id = req.url.split('/')[3];
+    const idx = lockScreens.findIndex(ls => ls.id === id);
+    if (idx === -1) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Lock screen nao encontrado' }));
+      return;
+    }
+    lockScreens.splice(idx, 1);
+    saveLockScreens();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true }));
     return;
   }
 

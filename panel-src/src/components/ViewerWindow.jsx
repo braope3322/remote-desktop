@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import {
   X, Maximize2, Minimize2, Settings, Lock, Unlock,
-  Upload, Clipboard, Keyboard, Mouse, ZoomIn, ZoomOut, Zap
+  Upload, Clipboard, Keyboard, Mouse, ZoomIn, ZoomOut, Zap, ChevronDown
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -26,12 +26,26 @@ export function ViewerWindow() {
   const [scale, setScale] = useState(0.6);
   const [isLocked, setIsLocked] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [lockScreens, setLockScreens] = useState([]);
+  const [selectedLockScreen, setSelectedLockScreen] = useState(null);
+  const [showLockMenu, setShowLockMenu] = useState(false);
 
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const wsRef = useRef(null);
   const frameCountRef = useRef(0);
   const lastFpsTimeRef = useRef(Date.now());
+
+  // Fetch lock screens
+  useEffect(() => {
+    fetch('/api/lockscreens')
+      .then(res => res.json())
+      .then(data => {
+        setLockScreens(data);
+        if (data.length > 0) setSelectedLockScreen(data[0]);
+      })
+      .catch(console.error);
+  }, []);
 
   // Connect WebSocket
   useEffect(() => {
@@ -173,13 +187,14 @@ export function ViewerWindow() {
     setShowSettings(false);
   };
 
-  const handleLock = () => {
+  const handleLock = (lockScreen = selectedLockScreen) => {
     if (isLocked) {
       send({ type: 'unlock-screen', targetId: deviceId });
     } else {
-      send({ type: 'lock-screen', targetId: deviceId, message: 'Aguarde o tecnico...' });
+      send({ type: 'lock-screen', targetId: deviceId, html: lockScreen?.html || '' });
     }
     setIsLocked(!isLocked);
+    setShowLockMenu(false);
   };
 
   useEffect(() => {
@@ -227,10 +242,37 @@ export function ViewerWindow() {
 
           <div className="w-px h-5 bg-white/10 mx-1" />
 
-          <button onClick={handleLock}
-            className={cn("p-1.5 rounded", isLocked ? "bg-amber-500/20 text-amber-400" : "text-white/40 hover:text-white")}>
-            {isLocked ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
-          </button>
+          {/* Lock Screen with Template Selector */}
+          <div className="relative flex items-center">
+            <button onClick={() => handleLock()}
+              className={cn("p-1.5 rounded-l", isLocked ? "bg-amber-500/20 text-amber-400" : "text-white/40 hover:text-white")}>
+              {isLocked ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+            </button>
+            {!isLocked && (
+              <button onClick={() => setShowLockMenu(!showLockMenu)}
+                className="p-1.5 rounded-r text-white/40 hover:text-white hover:bg-white/5">
+                <ChevronDown className="w-3 h-3" />
+              </button>
+            )}
+            {showLockMenu && !isLocked && (
+              <div className="absolute right-0 top-full mt-1 w-52 bg-zinc-800 border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden">
+                <div className="px-3 py-2 border-b border-white/10">
+                  <span className="text-[10px] text-white/40 uppercase tracking-wide">Selecionar Tela de Bloqueio</span>
+                </div>
+                {lockScreens.map(ls => (
+                  <button key={ls.id}
+                    onClick={() => { setSelectedLockScreen(ls); handleLock(ls); }}
+                    className={cn(
+                      "w-full px-3 py-2 text-left text-xs hover:bg-white/5 flex items-center gap-2",
+                      selectedLockScreen?.id === ls.id ? "text-blue-400" : "text-white/70"
+                    )}>
+                    <Lock className="w-3 h-3" />
+                    {ls.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           <div className="relative">
             <button onClick={() => setShowSettings(!showSettings)} className="p-1.5 text-white/40 hover:text-white">
