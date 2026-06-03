@@ -10,6 +10,7 @@ import hashlib
 import ctypes
 import ssl
 import sys
+import subprocess
 from io import BytesIO
 
 import mss
@@ -34,7 +35,7 @@ panel_connected = False
 ws_app = None
 running = True
 screen_locked = False
-lock_thread = None
+lock_process = None
 
 
 def set_console_title(title):
@@ -97,7 +98,6 @@ def print_status(status, id_code=None):
 def get_hwid():
     try:
         if os.name == 'nt':
-            import subprocess
             result = subprocess.run(
                 ['wmic', 'csproduct', 'get', 'uuid'],
                 capture_output=True, text=True, timeout=5,
@@ -128,95 +128,93 @@ def get_system_info():
 
 
 # ============================================
-# LOCK SCREEN - POPUP PARA O CLIENTE
+# LOCK SCREEN - PROCESSO SEPARADO
 # ============================================
 
+LOCK_SCRIPT = '''
+import sys
+import ctypes
+import tkinter as tk
+
+message = sys.argv[1] if len(sys.argv) > 1 else "Aguarde..."
+
+root = tk.Tk()
+root.title("")
+sw = root.winfo_screenwidth()
+sh = root.winfo_screenheight()
+root.geometry(f"{sw}x{sh}+0+0")
+root.configure(bg='#000000')
+root.overrideredirect(True)
+root.attributes('-topmost', True)
+root.protocol("WM_DELETE_WINDOW", lambda: None)
+root.bind('<Alt-F4>', lambda e: 'break')
+root.bind('<Escape>', lambda e: 'break')
+
+root.update_idletasks()
+try:
+    hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+    if hwnd == 0:
+        hwnd = root.winfo_id()
+    ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, 0x11)
+except:
+    pass
+
+frame = tk.Frame(root, bg='#000000')
+frame.place(relx=0.5, rely=0.5, anchor='center')
+tk.Label(frame, text="\\U0001F512", font=('Segoe UI Emoji', 72), bg='#000000', fg='#f59e0b').pack(pady=20)
+tk.Label(frame, text=message, font=('Segoe UI', 24, 'bold'), bg='#000000', fg='#ffffff', wraplength=700).pack(pady=15)
+tk.Label(frame, text="Por favor, aguarde o tecnico liberar a tela.", font=('Segoe UI', 12), bg='#000000', fg='#555555').pack(pady=10)
+
+def keep_top():
+    root.lift()
+    root.attributes('-topmost', True)
+    root.after(200, keep_top)
+
+keep_top()
+root.mainloop()
+'''
+
+
 def show_lock_screen(message):
-    global screen_locked, lock_thread
+    global screen_locked, lock_process
 
     if screen_locked:
         return
 
     screen_locked = True
 
-    def create_lock_window():
-        global screen_locked
-        try:
-            import tkinter as tk
+    try:
+        # Criar arquivo temporario com o script
+        import tempfile
+        script_path = os.path.join(tempfile.gettempdir(), 'lock_screen.pyw')
+        with open(script_path, 'w', encoding='utf-8') as f:
+            f.write(LOCK_SCRIPT)
 
-            root = tk.Tk()
-            root.title("Aguarde")
+        # Executar como processo separado (pythonw para sem console)
+        pythonw = sys.executable.replace('python.exe', 'pythonw.exe')
+        if not os.path.exists(pythonw):
+            pythonw = sys.executable
 
-            # Obter dimensoes da tela
-            sw = root.winfo_screenwidth()
-            sh = root.winfo_screenheight()
-
-            # Janela fullscreen
-            root.geometry(f"{sw}x{sh}+0+0")
-            root.configure(bg='#000000')
-            root.overrideredirect(True)
-            root.attributes('-topmost', True)
-
-            # Bloquear teclas
-            root.protocol("WM_DELETE_WINDOW", lambda: None)
-            root.bind('<Alt-F4>', lambda e: 'break')
-            root.bind('<Escape>', lambda e: 'break')
-            root.bind('<Alt-Tab>', lambda e: 'break')
-
-            # Forcar atualizacao para obter HWND
-            root.update_idletasks()
-            root.update()
-
-            # Aplicar WDA_EXCLUDEFROMCAPTURE para esconder da captura
-            try:
-                hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
-                if hwnd == 0:
-                    hwnd = root.winfo_id()
-                # WDA_EXCLUDEFROMCAPTURE = 0x11 (Windows 10 2004+)
-                result = ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, 0x11)
-            except:
-                pass
-
-            # Conteudo central
-            frame = tk.Frame(root, bg='#000000')
-            frame.place(relx=0.5, rely=0.5, anchor='center')
-
-            # Icone cadeado
-            lock_icon = tk.Label(frame, text="🔒", font=('Segoe UI Emoji', 72), bg='#000000', fg='#f59e0b')
-            lock_icon.pack(pady=20)
-
-            # Mensagem
-            msg = tk.Label(frame, text=message, font=('Segoe UI', 24, 'bold'), bg='#000000', fg='#ffffff', wraplength=700)
-            msg.pack(pady=15)
-
-            # Submensagem
-            sub = tk.Label(frame, text="Por favor, aguarde o técnico liberar a tela.", font=('Segoe UI', 12), bg='#000000', fg='#555555')
-            sub.pack(pady=10)
-
-            # Loop para verificar desbloqueio
-            def check_loop():
-                if not screen_locked:
-                    root.destroy()
-                    return
-                root.lift()
-                root.attributes('-topmost', True)
-                root.focus_force()
-                root.after(150, check_loop)
-
-            root.after(100, check_loop)
-            root.mainloop()
-
-        except Exception as e:
-            screen_locked = False
-
-    lock_thread = threading.Thread(target=create_lock_window, daemon=True)
-    lock_thread.start()
-    time.sleep(0.3)  # Aguardar janela ser criada
+        lock_process = subprocess.Popen(
+            [pythonw, script_path, message],
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        )
+    except Exception as e:
+        screen_locked = False
 
 
 def hide_lock_screen():
-    global screen_locked
+    global screen_locked, lock_process
+
     screen_locked = False
+
+    if lock_process:
+        try:
+            lock_process.terminate()
+            lock_process.kill()
+        except:
+            pass
+        lock_process = None
 
 
 # ============================================
