@@ -111,9 +111,7 @@ $Global:id = $null
 $Global:run = $true
 $Global:panel = $false
 $Global:locked = $false
-$Global:lockRunspace = $null
-$Global:lockPowershell = $null
-$Global:lockSync = $null
+$Global:lockProcess = $null
 $Global:scale = 0.6
 $Global:quality = 50
 
@@ -205,26 +203,12 @@ function DoMove($x, $y) {
 
 function Lock($msg) {
     if ($Global:locked) { return }
-
-    # Limpar qualquer estado anterior
-    if ($Global:lockRunspace) {
-        try { $Global:lockRunspace.Close(); $Global:lockRunspace.Dispose() } catch {}
-        $Global:lockRunspace = $null
-    }
-    if ($Global:lockPowershell) {
-        try { $Global:lockPowershell.Dispose() } catch {}
-        $Global:lockPowershell = $null
-    }
-
     $Global:locked = $true
-    $Global:lockSync = [hashtable]::Synchronized(@{ Stop = $false })
 
-    $code = {
-        param($message, $sync)
-        Add-Type -AssemblyName System.Windows.Forms
-        Add-Type -AssemblyName System.Drawing
-
-        Add-Type @"
+    $code = @"
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+Add-Type @'
 using System;
 using System.Runtime.InteropServices;
 public class LockAPI {
@@ -234,94 +218,50 @@ public class LockAPI {
     public static extern int GetWindowLong(IntPtr hwnd, int index);
     [DllImport("user32.dll")]
     public static extern int SetWindowLong(IntPtr hwnd, int index, int value);
-    public const int GWL_EXSTYLE = -20;
-    public const int WS_EX_LAYERED = 0x80000;
-    public const int WS_EX_TRANSPARENT = 0x20;
-    public const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
 }
+'@
+`$form = New-Object Windows.Forms.Form
+`$form.FormBorderStyle = 'None'
+`$form.StartPosition = 'Manual'
+`$form.Location = [Drawing.Point]::new(0, 0)
+`$form.Size = [Windows.Forms.Screen]::PrimaryScreen.Bounds.Size
+`$form.TopMost = `$true
+`$form.BackColor = [Drawing.Color]::FromArgb(10, 10, 15)
+`$form.ShowInTaskbar = `$false
+`$title = New-Object Windows.Forms.Label
+`$title.Text = '$msg'
+`$title.Font = New-Object Drawing.Font('Segoe UI', 36, [Drawing.FontStyle]::Bold)
+`$title.ForeColor = [Drawing.Color]::White
+`$title.AutoSize = `$true
+`$sub = New-Object Windows.Forms.Label
+`$sub.Text = 'Por favor, aguarde o tecnico liberar a tela.'
+`$sub.Font = New-Object Drawing.Font('Segoe UI', 16)
+`$sub.ForeColor = [Drawing.Color]::Gray
+`$sub.AutoSize = `$true
+`$form.Controls.Add(`$title)
+`$form.Controls.Add(`$sub)
+`$form.Add_Load({
+    `$title.Location = [Drawing.Point]::new((`$form.Width - `$title.Width) / 2, `$form.Height / 2 - 50)
+    `$sub.Location = [Drawing.Point]::new((`$form.Width - `$sub.Width) / 2, `$form.Height / 2 + 20)
+    [LockAPI]::SetWindowDisplayAffinity(`$form.Handle, 0x11) | Out-Null
+    `$style = [LockAPI]::GetWindowLong(`$form.Handle, -20)
+    [LockAPI]::SetWindowLong(`$form.Handle, -20, `$style -bor 0x80000 -bor 0x20) | Out-Null
+})
+[Windows.Forms.Application]::Run(`$form)
 "@
 
-        $form = New-Object Windows.Forms.Form
-        $form.FormBorderStyle = 'None'
-        $form.StartPosition = 'Manual'
-        $form.Location = [Drawing.Point]::new(0, 0)
-        $form.Size = [Windows.Forms.Screen]::PrimaryScreen.Bounds.Size
-        $form.TopMost = $true
-        $form.BackColor = [Drawing.Color]::FromArgb(10, 10, 15)
-        $form.ShowInTaskbar = $false
-
-        $title = New-Object Windows.Forms.Label
-        $title.Text = $message
-        $title.Font = New-Object Drawing.Font("Segoe UI", 36, [Drawing.FontStyle]::Bold)
-        $title.ForeColor = [Drawing.Color]::White
-        $title.AutoSize = $true
-
-        $sub = New-Object Windows.Forms.Label
-        $sub.Text = "Por favor, aguarde o tecnico liberar a tela."
-        $sub.Font = New-Object Drawing.Font("Segoe UI", 16)
-        $sub.ForeColor = [Drawing.Color]::Gray
-        $sub.AutoSize = $true
-
-        $form.Controls.Add($title)
-        $form.Controls.Add($sub)
-
-        $timer = New-Object Windows.Forms.Timer
-        $timer.Interval = 100
-        $timer.Add_Tick({
-            if ($sync.Stop) {
-                $timer.Stop()
-                $form.Close()
-            }
-        })
-
-        $form.Add_Load({
-            $sw = $form.Width
-            $sh = $form.Height
-            $title.Location = [Drawing.Point]::new(($sw - $title.Width) / 2, $sh / 2 - 50)
-            $sub.Location = [Drawing.Point]::new(($sw - $sub.Width) / 2, $sh / 2 + 20)
-
-            [LockAPI]::SetWindowDisplayAffinity($form.Handle, [LockAPI]::WDA_EXCLUDEFROMCAPTURE) | Out-Null
-
-            $style = [LockAPI]::GetWindowLong($form.Handle, [LockAPI]::GWL_EXSTYLE)
-            [LockAPI]::SetWindowLong($form.Handle, [LockAPI]::GWL_EXSTYLE, $style -bor [LockAPI]::WS_EX_LAYERED -bor [LockAPI]::WS_EX_TRANSPARENT) | Out-Null
-
-            $timer.Start()
-        })
-
-        [Windows.Forms.Application]::Run($form)
-    }
-
-    $Global:lockRunspace = [runspacefactory]::CreateRunspace()
-    $Global:lockRunspace.ApartmentState = "STA"
-    $Global:lockRunspace.ThreadOptions = "ReuseThread"
-    $Global:lockRunspace.Open()
-
-    $Global:lockPowershell = [powershell]::Create()
-    $Global:lockPowershell.Runspace = $Global:lockRunspace
-    $Global:lockPowershell.AddScript($code).AddArgument($msg).AddArgument($Global:lockSync) | Out-Null
-    $Global:lockPowershell.BeginInvoke() | Out-Null
+    $Global:lockProcess = Start-Process powershell -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -Command `"$code`"" -PassThru -WindowStyle Hidden
 }
 
 function Unlock {
     if (-not $Global:locked) { return }
 
-    if ($Global:lockSync) {
-        $Global:lockSync.Stop = $true
+    if ($Global:lockProcess) {
+        try { $Global:lockProcess.Kill() } catch {}
+        try { $Global:lockProcess.Dispose() } catch {}
+        $Global:lockProcess = $null
     }
 
-    Start-Sleep -Milliseconds 500
-
-    if ($Global:lockPowershell) {
-        try { $Global:lockPowershell.Stop() } catch {}
-        try { $Global:lockPowershell.Dispose() } catch {}
-        $Global:lockPowershell = $null
-    }
-    if ($Global:lockRunspace) {
-        try { $Global:lockRunspace.Close() } catch {}
-        try { $Global:lockRunspace.Dispose() } catch {}
-        $Global:lockRunspace = $null
-    }
-    $Global:lockSync = $null
     $Global:locked = $false
 }
 
