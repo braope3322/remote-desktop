@@ -258,8 +258,6 @@ def capture_screen():
 
 def handle_mouse_move(data):
     global current_scale
-    if screen_locked:
-        return
     try:
         x = int(data['x'] / current_scale)
         y = int(data['y'] / current_scale)
@@ -270,8 +268,6 @@ def handle_mouse_move(data):
 
 def handle_mouse_click(data):
     global current_scale
-    if screen_locked:
-        return
     try:
         x = int(data['x'] / current_scale)
         y = int(data['y'] / current_scale)
@@ -288,8 +284,6 @@ def handle_mouse_click(data):
 
 
 def handle_mouse_scroll(data):
-    if screen_locked:
-        return
     try:
         delta = data.get('delta', 0)
         pyautogui.scroll(delta)
@@ -298,8 +292,6 @@ def handle_mouse_scroll(data):
 
 
 def handle_key_press(data):
-    if screen_locked:
-        return
     try:
         key = data.get('key', '')
         key_map = {
@@ -318,8 +310,6 @@ def handle_key_press(data):
 
 
 def handle_key_combination(data):
-    if screen_locked:
-        return
     try:
         keys = data.get('keys', [])
         key_map = {'Control': 'ctrl', 'Alt': 'alt', 'Shift': 'shift', 'Meta': 'win'}
