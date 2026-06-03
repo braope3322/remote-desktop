@@ -41,52 +41,12 @@ input_blocked = False
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 
-# Hooks
-WH_KEYBOARD_LL = 13
-WH_MOUSE_LL = 14
-keyboard_hook = None
-mouse_hook = None
-
-HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
-
-
-def low_level_keyboard_proc(nCode, wParam, lParam):
-    if input_blocked and nCode >= 0:
-        return 1
-    return user32.CallNextHookEx(keyboard_hook, nCode, wParam, lParam)
-
-
-def low_level_mouse_proc(nCode, wParam, lParam):
-    if input_blocked and nCode >= 0:
-        return 1
-    return user32.CallNextHookEx(mouse_hook, nCode, wParam, lParam)
-
-
-kb_callback = HOOKPROC(low_level_keyboard_proc)
-ms_callback = HOOKPROC(low_level_mouse_proc)
-
-
-def install_hooks():
-    global keyboard_hook, mouse_hook
-    keyboard_hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, kb_callback, kernel32.GetModuleHandleW(None), 0)
-    mouse_hook = user32.SetWindowsHookExW(WH_MOUSE_LL, ms_callback, kernel32.GetModuleHandleW(None), 0)
-
-
-def uninstall_hooks():
-    global keyboard_hook, mouse_hook
-    if keyboard_hook:
-        user32.UnhookWindowsHookEx(keyboard_hook)
-    if mouse_hook:
-        user32.UnhookWindowsHookEx(mouse_hook)
-
-
-def message_loop():
-    msg = wintypes.MSG()
-    while running:
-        if user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
-            user32.TranslateMessage(ctypes.byref(msg))
-            user32.DispatchMessageW(ctypes.byref(msg))
-        time.sleep(0.01)
+# BlockInput - bloqueia input local mas permite programatico
+def block_input(block):
+    try:
+        user32.BlockInput(block)
+    except:
+        pass
 
 
 def set_console_title(title):
@@ -167,6 +127,7 @@ def show_lock_screen(message):
 
     screen_locked = True
     input_blocked = True
+    block_input(True)  # Bloqueia input local
 
     def run_lock():
         global screen_locked, input_blocked
@@ -216,6 +177,7 @@ def hide_lock_screen():
     global screen_locked, input_blocked
     screen_locked = False
     input_blocked = False
+    block_input(False)  # Desbloqueia input local
 
 
 # ============================================
@@ -343,8 +305,6 @@ def main():
 
     print_status("connecting")
 
-    install_hooks()
-    threading.Thread(target=message_loop, daemon=True).start()
     threading.Thread(target=capture_screen, daemon=True).start()
 
     while running:
@@ -356,8 +316,6 @@ def main():
             break
         except:
             time.sleep(5)
-
-    uninstall_hooks()
 
 
 if __name__ == "__main__":
