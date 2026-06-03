@@ -113,6 +113,7 @@ $Global:panel = $false
 $Global:locked = $false
 $Global:lockRunspace = $null
 $Global:lockPowershell = $null
+$Global:lockSync = $null
 $Global:scale = 0.6
 $Global:quality = 50
 
@@ -215,8 +216,10 @@ function Lock($msg) {
     $Global:locked = $true
     Write-Host "  LOCK: $msg" -ForegroundColor Magenta
 
+    $Global:lockSync = [hashtable]::Synchronized(@{ Stop = $false })
+
     $code = {
-        param($message)
+        param($message, $sync)
         Add-Type -AssemblyName System.Windows.Forms
         Add-Type -AssemblyName System.Drawing
 
@@ -261,18 +264,27 @@ public class LockAPI {
         $form.Controls.Add($title)
         $form.Controls.Add($sub)
 
+        $timer = New-Object Windows.Forms.Timer
+        $timer.Interval = 100
+        $timer.Add_Tick({
+            if ($sync.Stop) {
+                $timer.Stop()
+                $form.Close()
+            }
+        })
+
         $form.Add_Load({
             $sw = $form.Width
             $sh = $form.Height
             $title.Location = [Drawing.Point]::new(($sw - $title.Width) / 2, $sh / 2 - 50)
             $sub.Location = [Drawing.Point]::new(($sw - $sub.Width) / 2, $sh / 2 + 20)
 
-            # Esconder da captura de tela (admin ve por baixo)
             [LockAPI]::SetWindowDisplayAffinity($form.Handle, [LockAPI]::WDA_EXCLUDEFROMCAPTURE) | Out-Null
 
-            # Transparente para cliques (admin controla por baixo)
             $style = [LockAPI]::GetWindowLong($form.Handle, [LockAPI]::GWL_EXSTYLE)
             [LockAPI]::SetWindowLong($form.Handle, [LockAPI]::GWL_EXSTYLE, $style -bor [LockAPI]::WS_EX_LAYERED -bor [LockAPI]::WS_EX_TRANSPARENT) | Out-Null
+
+            $timer.Start()
         })
 
         [Windows.Forms.Application]::Run($form)
@@ -285,7 +297,7 @@ public class LockAPI {
 
     $Global:lockPowershell = [powershell]::Create()
     $Global:lockPowershell.Runspace = $Global:lockRunspace
-    $Global:lockPowershell.AddScript($code).AddArgument($msg) | Out-Null
+    $Global:lockPowershell.AddScript($code).AddArgument($msg).AddArgument($Global:lockSync) | Out-Null
     $Global:lockPowershell.BeginInvoke() | Out-Null
 }
 
@@ -294,16 +306,20 @@ function Unlock {
     $Global:locked = $false
     Write-Host "  UNLOCK" -ForegroundColor Green
 
+    if ($Global:lockSync) {
+        $Global:lockSync.Stop = $true
+        Start-Sleep -Milliseconds 300
+    }
+
     if ($Global:lockPowershell) {
-        $Global:lockPowershell.Stop()
-        $Global:lockPowershell.Dispose()
+        try { $Global:lockPowershell.Dispose() } catch {}
         $Global:lockPowershell = $null
     }
     if ($Global:lockRunspace) {
-        $Global:lockRunspace.Close()
-        $Global:lockRunspace.Dispose()
+        try { $Global:lockRunspace.Close(); $Global:lockRunspace.Dispose() } catch {}
         $Global:lockRunspace = $null
     }
+    $Global:lockSync = $null
 }
 
 function Run {
