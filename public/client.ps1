@@ -96,7 +96,8 @@ function Capture-Screen {
 function Move-MouseTo($x, $y) {
     $realX = [int]($x / $Global:scale)
     $realY = [int]($y / $Global:scale)
-    $null = [WinAPI]::SetCursorPos($realX, $realY)
+    $result = [WinAPI]::SetCursorPos($realX, $realY)
+    Write-Host "  [Mouse] Move: input($x,$y) -> real($realX,$realY) scale=$($Global:scale) result=$result"
 }
 
 function Click-Mouse($x, $y, $button, $clicks) {
@@ -320,17 +321,23 @@ function Start-Client {
                                     Hide-LockScreen
                                     Write-Host "  Painel desconectado"
                                 }
-                                "mouse-move" { Move-MouseTo $msg.x $msg.y }
+                                "mouse-move" {
+                                    Write-Host "  [Recv] mouse-move: x=$($msg.x) y=$($msg.y)"
+                                    Move-MouseTo $msg.x $msg.y
+                                }
                                 "mouse-click" {
                                     Write-Host "  Click: $($msg.x),$($msg.y) btn=$($msg.button)"
                                     Click-Mouse $msg.x $msg.y $msg.button $(if ($msg.clicks) { $msg.clicks } else { 1 })
                                 }
                                 "mouse-scroll" { Scroll-Mouse $msg.delta }
                                 "key-press" {
-                                    Write-Host "  Key: $($msg.key)"
+                                    Write-Host "  [Recv] key-press: key=$($msg.key)"
                                     Press-Key $msg.key
                                 }
-                                "key-combination" { Press-KeyCombo $msg.keys }
+                                "key-combination" {
+                                    Write-Host "  [Recv] key-combo: keys=$($msg.keys -join '+')"
+                                    Press-KeyCombo $msg.keys
+                                }
                                 "lock-screen" { Show-LockScreen $(if ($msg.message) { $msg.message } else { "Aguarde..." }) }
                                 "unlock-screen" { Hide-LockScreen }
                                 "set-quality" {
