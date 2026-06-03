@@ -379,8 +379,16 @@ function Run {
 
                 Start-Sleep -Milliseconds 20
             }
+
+            # Conexao caiu - desbloquear tela
+            Unlock
+            $Global:panel = $false
+            Write-Host "  Conexao perdida, reconectando..." -ForegroundColor Yellow
             $ws.Dispose()
         } catch {
+            # Erro - desbloquear tela
+            Unlock
+            $Global:panel = $false
             Write-Host "  Erro: $($_.Exception.Message)" -ForegroundColor Red
             Start-Sleep -Seconds 5
         }
