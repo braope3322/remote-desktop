@@ -41,6 +41,72 @@ input_blocked = False
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 
+# ============================================
+# MOUSE DIRETO VIA SENDINPUT (ignora janela topmost)
+# ============================================
+
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_RIGHTDOWN = 0x0008
+MOUSEEVENTF_RIGHTUP = 0x0010
+MOUSEEVENTF_MIDDLEDOWN = 0x0020
+MOUSEEVENTF_MIDDLEUP = 0x0040
+MOUSEEVENTF_WHEEL = 0x0800
+MOUSEEVENTF_ABSOLUTE = 0x8000
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", ctypes.c_long),
+        ("dy", ctypes.c_long),
+        ("mouseData", ctypes.c_ulong),
+        ("dwFlags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))
+    ]
+
+class INPUT(ctypes.Structure):
+    _fields_ = [
+        ("type", ctypes.c_ulong),
+        ("mi", MOUSEINPUT)
+    ]
+
+def send_mouse_input(dx, dy, flags, data=0):
+    extra = ctypes.c_ulong(0)
+    inp = INPUT()
+    inp.type = 0  # INPUT_MOUSE
+    inp.mi = MOUSEINPUT(dx, dy, data, flags, 0, ctypes.pointer(extra))
+    user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+
+def mouse_move_absolute(x, y):
+    screen_w = user32.GetSystemMetrics(0)
+    screen_h = user32.GetSystemMetrics(1)
+    abs_x = int(x * 65535 / screen_w)
+    abs_y = int(y * 65535 / screen_h)
+    send_mouse_input(abs_x, abs_y, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE)
+
+def mouse_click_at(x, y, button='left', clicks=1):
+    mouse_move_absolute(x, y)
+    time.sleep(0.01)
+
+    if button == 'left':
+        down, up = MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP
+    elif button == 'right':
+        down, up = MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP
+    elif button == 'middle':
+        down, up = MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP
+    else:
+        down, up = MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP
+
+    for _ in range(clicks):
+        send_mouse_input(0, 0, down)
+        time.sleep(0.01)
+        send_mouse_input(0, 0, up)
+        time.sleep(0.01)
+
+def mouse_scroll_wheel(delta):
+    send_mouse_input(0, 0, MOUSEEVENTF_WHEEL, int(delta * 120))
+
 
 
 def set_console_title(title):
@@ -213,21 +279,24 @@ def capture_screen():
 
 def handle_mouse_move(d):
     try:
-        pyautogui.moveTo(int(d['x']/current_scale), int(d['y']/current_scale), duration=0)
+        x = int(d['x'] / current_scale)
+        y = int(d['y'] / current_scale)
+        mouse_move_absolute(x, y)
     except: pass
 
 def handle_mouse_click(d):
     try:
-        x, y = int(d['x']/current_scale), int(d['y']/current_scale)
+        x = int(d['x'] / current_scale)
+        y = int(d['y'] / current_scale)
         btn = d.get('button', 'left')
-        if btn == 'right': pyautogui.click(x, y, button='right')
-        elif btn == 'middle': pyautogui.click(x, y, button='middle')
-        else: pyautogui.click(x, y, clicks=d.get('clicks', 1))
+        clicks = d.get('clicks', 1)
+        mouse_click_at(x, y, btn, clicks)
     except: pass
 
 def handle_mouse_scroll(d):
     try:
-        pyautogui.scroll(d.get('delta', 0))
+        delta = d.get('delta', 0)
+        mouse_scroll_wheel(delta)
     except: pass
 
 def handle_key_press(d):
