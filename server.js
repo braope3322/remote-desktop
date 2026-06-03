@@ -74,13 +74,12 @@ function generatePolymorphicClient() {
     .replace(/{ DoMove /g, `{ ${v.DoMove} `)
     .replace(/function Lock\(/g, `function ${v.Lock}(`)
     .replace(/{ Lock \$/g, `{ ${v.Lock} $`)
-    .replace(/function Unlock /g, `function ${v.Unlock} `)
-    .replace(/; Unlock;/g, `; ${v.Unlock};`)
-    .replace(/; Unlock\n/g, `; ${v.Unlock}\n`)
+    .replace(/function Unlock\b/g, `function ${v.Unlock}`)
+    .replace(/; Unlock\b/g, `; ${v.Unlock}`)
     .replace(/{ Unlock }/g, `{ ${v.Unlock} }`)
-    .replace(/\n            Unlock\n/g, `\n            ${v.Unlock}\n`)
-    .replace(/function Run /g, `function ${v.Run} `)
-    .replace(/\nRun\s*$/g, `\n${v.Run}`)
+    .replace(/^\s+Unlock$/gm, (match) => match.replace('Unlock', v.Unlock))
+    .replace(/function Run\b/g, `function ${v.Run}`)
+    .replace(/^\s*Run\s*$/gm, v.Run)
     .replace(/\$inputCode/g, `$${v.inputCode}`);
 
   // Adicionar junk no início
