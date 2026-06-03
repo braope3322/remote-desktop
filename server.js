@@ -8,6 +8,21 @@ import { dirname } from 'path';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 
+// Get country from IP
+async function getCountryFromIP(ip) {
+  try {
+    // Clean IP
+    const cleanIP = ip.replace('::ffff:', '').split(',')[0].trim();
+    if (cleanIP === '127.0.0.1' || cleanIP === '::1') return 'LOCAL';
+
+    const res = await fetch(`http://ip-api.com/json/${cleanIP}?fields=countryCode`);
+    const data = await res.json();
+    return data.countryCode || 'XX';
+  } catch (e) {
+    return 'XX';
+  }
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -199,21 +214,25 @@ wss.on('connection', (ws, req) => {
         role = 'client';
         authenticated = true;
 
-        allDevices[clientId] = {
-          hostname: msg.hostname || 'Unknown',
-          username: msg.username || 'Unknown',
-          os: msg.os || 'Unknown',
-          ip: clientIp,
-          hwid: msg.hwid || 'N/A',
-          online: true,
-          lastSeen: new Date().toISOString(),
-          firstSeen: allDevices[clientId]?.firstSeen || new Date().toISOString()
-        };
+        // Get country async
+        getCountryFromIP(clientIp).then(country => {
+          allDevices[clientId] = {
+            hostname: msg.hostname || 'Unknown',
+            username: msg.username || 'Unknown',
+            os: msg.os || 'Unknown',
+            ip: clientIp,
+            country: country,
+            hwid: msg.hwid || 'N/A',
+            online: true,
+            lastSeen: new Date().toISOString(),
+            firstSeen: allDevices[clientId]?.firstSeen || new Date().toISOString()
+          };
 
-        clients.set(clientId, { ws });
-        saveDevices();
-        ws.send(JSON.stringify({ type: 'registered', clientId }));
-        broadcastDeviceList();
+          clients.set(clientId, { ws });
+          saveDevices();
+          ws.send(JSON.stringify({ type: 'registered', clientId }));
+          broadcastDeviceList();
+        });
         return;
       }
 

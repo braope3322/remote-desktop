@@ -10,7 +10,7 @@ import { cn } from '../lib/utils';
 
 export function Dashboard({ token, username, onLogout }) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [viewMode, setViewMode] = useState('grid');
+  const [viewMode, setViewMode] = useState('list');
 
   const {
     connected,
@@ -187,6 +187,7 @@ export function Dashboard({ token, username, onLogout }) {
                 <DeviceCard
                   key={device.id}
                   device={device}
+                  viewMode={viewMode}
                   onConnect={handleConnect}
                   onRemove={removeDevice}
                   onDisconnect={disconnectClient}
