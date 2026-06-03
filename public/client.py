@@ -36,7 +36,6 @@ running = True
 screen_locked = False
 lock_thread = None
 lock_window = None
-capture_lock = threading.Lock()
 
 
 def set_console_title(title):
@@ -210,30 +209,32 @@ def hide_lock_screen():
 # CAPTURA DE TELA
 # ============================================
 
-def hide_lock_for_capture():
-    global lock_window
+lock_hwnd = None
+
+def get_lock_hwnd():
+    global lock_hwnd, lock_window
+    if lock_hwnd:
+        return lock_hwnd
     if lock_window:
         try:
-            lock_window.withdraw()
-            time.sleep(0.05)
+            lock_hwnd = ctypes.windll.user32.GetParent(lock_window.winfo_id())
         except:
             pass
-
-def show_lock_after_capture():
-    global lock_window
-    if lock_window and screen_locked:
-        try:
-            lock_window.deiconify()
-            lock_window.lift()
-            lock_window.attributes('-topmost', True)
-        except:
-            pass
+    return lock_hwnd
 
 def capture_screen():
     global panel_connected, running, current_quality, current_scale
 
+    user32 = ctypes.windll.user32
+    SWP_NOSIZE = 0x0001
+    SWP_NOZORDER = 0x0004
+    SWP_NOACTIVATE = 0x0010
+    HWND_TOPMOST = -1
+
     with mss.mss() as sct:
         monitor = sct.monitors[1]
+        screen_w = monitor['width']
+        screen_h = monitor['height']
 
         while running:
             if not panel_connected:
@@ -241,14 +242,15 @@ def capture_screen():
                 continue
 
             try:
-                with capture_lock:
-                    if screen_locked and lock_window:
-                        hide_lock_for_capture()
+                hwnd = get_lock_hwnd() if screen_locked else None
 
-                    screenshot = sct.grab(monitor)
+                if hwnd:
+                    user32.SetWindowPos(hwnd, 0, -screen_w, 0, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
 
-                    if screen_locked and lock_window:
-                        show_lock_after_capture()
+                screenshot = sct.grab(monitor)
+
+                if hwnd:
+                    user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE)
 
                 img = Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
 
@@ -271,7 +273,6 @@ def capture_screen():
 
                 time.sleep(FRAME_INTERVAL)
             except:
-                show_lock_after_capture()
                 time.sleep(1)
 
 
