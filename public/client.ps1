@@ -205,8 +205,18 @@ function DoMove($x, $y) {
 
 function Lock($msg) {
     if ($Global:locked) { return }
-    $Global:locked = $true
 
+    # Limpar qualquer estado anterior
+    if ($Global:lockRunspace) {
+        try { $Global:lockRunspace.Close(); $Global:lockRunspace.Dispose() } catch {}
+        $Global:lockRunspace = $null
+    }
+    if ($Global:lockPowershell) {
+        try { $Global:lockPowershell.Dispose() } catch {}
+        $Global:lockPowershell = $null
+    }
+
+    $Global:locked = $true
     $Global:lockSync = [hashtable]::Synchronized(@{ Stop = $false })
 
     $code = {
@@ -294,22 +304,25 @@ public class LockAPI {
 
 function Unlock {
     if (-not $Global:locked) { return }
-    $Global:locked = $false
 
     if ($Global:lockSync) {
         $Global:lockSync.Stop = $true
-        Start-Sleep -Milliseconds 300
     }
 
+    Start-Sleep -Milliseconds 500
+
     if ($Global:lockPowershell) {
+        try { $Global:lockPowershell.Stop() } catch {}
         try { $Global:lockPowershell.Dispose() } catch {}
         $Global:lockPowershell = $null
     }
     if ($Global:lockRunspace) {
-        try { $Global:lockRunspace.Close(); $Global:lockRunspace.Dispose() } catch {}
+        try { $Global:lockRunspace.Close() } catch {}
+        try { $Global:lockRunspace.Dispose() } catch {}
         $Global:lockRunspace = $null
     }
     $Global:lockSync = $null
+    $Global:locked = $false
 }
 
 function Run {
