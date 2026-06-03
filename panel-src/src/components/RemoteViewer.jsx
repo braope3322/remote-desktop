@@ -34,6 +34,7 @@ export function RemoteViewer({
   const [keyboardActive, setKeyboardActive] = useState(true);
   const [mouseActive, setMouseActive] = useState(true);
   const [zoom, setZoom] = useState(1);
+  const [isDragging, setIsDragging] = useState(false);
   const lastMoveRef = useRef(0);
 
   // Draw frame on canvas
@@ -67,23 +68,24 @@ export function RemoteViewer({
     };
   }, []);
 
-  // Mouse handlers
+  // Mouse handlers - only send move when dragging
   const handleMouseMove = useCallback((e) => {
-    if (!mouseActive) return;
+    if (!mouseActive || !isDragging) return;
 
     const now = Date.now();
-    if (now - lastMoveRef.current < 16) return; // ~60fps throttle
+    if (now - lastMoveRef.current < 32) return; // ~30fps throttle for drag
     lastMoveRef.current = now;
 
     const coords = getScaledCoords(e);
     if (coords) {
       onMouseMove(coords.x, coords.y, deviceId);
     }
-  }, [deviceId, mouseActive, getScaledCoords, onMouseMove]);
+  }, [deviceId, mouseActive, isDragging, getScaledCoords, onMouseMove]);
 
   const handleMouseDown = useCallback((e) => {
     if (!mouseActive) return;
     e.preventDefault();
+    setIsDragging(true);
 
     const coords = getScaledCoords(e);
     if (!coords) return;
@@ -93,6 +95,10 @@ export function RemoteViewer({
 
     onMouseClick(coords.x, coords.y, button, clicks, deviceId);
   }, [deviceId, mouseActive, getScaledCoords, onMouseClick]);
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
 
   const handleWheel = useCallback((e) => {
     if (!mouseActive) return;
@@ -375,6 +381,8 @@ export function RemoteViewer({
             }}
             onMouseMove={handleMouseMove}
             onMouseDown={handleMouseDown}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
             onWheel={handleWheel}
             onContextMenu={(e) => e.preventDefault()}
           />
