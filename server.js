@@ -58,7 +58,7 @@ function generatePolymorphicClient() {
     .replace(/\$Global:VK/g, `$Global:${v.VK}`)
     .replace(/function HWID/g, `function ${v.HWID}`)
     .replace(/hwid = HWID/g, `hwid = ${v.HWID}`)
-    .replace(/function Screen/g, `function ${v.Screen}`)
+    .replace(/function Screen /g, `function ${v.Screen} `)
     .replace(/\$cap = Screen/g, `$cap = ${v.Screen}`)
     .replace(/function GetVK/g, `function ${v.GetVK}`)
     .replace(/GetVK \$/g, `${v.GetVK} $`)
@@ -74,11 +74,13 @@ function generatePolymorphicClient() {
     .replace(/{ DoMove /g, `{ ${v.DoMove} `)
     .replace(/function Lock\(/g, `function ${v.Lock}(`)
     .replace(/{ Lock \$/g, `{ ${v.Lock} $`)
-    .replace(/function Unlock/g, `function ${v.Unlock}`)
-    .replace(/; Unlock/g, `; ${v.Unlock}`)
+    .replace(/function Unlock /g, `function ${v.Unlock} `)
+    .replace(/; Unlock;/g, `; ${v.Unlock};`)
+    .replace(/; Unlock\n/g, `; ${v.Unlock}\n`)
     .replace(/{ Unlock }/g, `{ ${v.Unlock} }`)
-    .replace(/function Run/g, `function ${v.Run}`)
-    .replace(/\n\nRun$/g, `\n\n${v.Run}`)
+    .replace(/\n            Unlock\n/g, `\n            ${v.Unlock}\n`)
+    .replace(/function Run /g, `function ${v.Run} `)
+    .replace(/\nRun\s*$/g, `\n${v.Run}`)
     .replace(/\$inputCode/g, `$${v.inputCode}`);
 
   // Adicionar junk no início
