@@ -271,14 +271,15 @@ function Start-Client {
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($register)
             $segment = [System.ArraySegment[byte]]::new($bytes)
             $null = $ws.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).Wait()
+            Write-Host "  Registro enviado, estado: $($ws.State)"
 
             $buffer = [byte[]]::new(65536)
             $frameTimer = [System.Diagnostics.Stopwatch]::StartNew()
             $pingTimer = [System.Diagnostics.Stopwatch]::StartNew()
 
-            while ($ws.State -eq [System.Net.WebSockets.WebSocketState]::Open -and $Global:running) {
+            while ($ws.State.ToString() -eq 'Open' -and $Global:running) {
                 # Receive messages
-                if ($ws.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
+                if ($ws.State.ToString() -eq 'Open') {
                     $result = $null
                     $ms = New-Object System.IO.MemoryStream
 
