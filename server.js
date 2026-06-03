@@ -221,13 +221,32 @@ if (existsSync(LOCKSCREENS_FILE)) {
   } catch (e) { lockScreens = []; }
 }
 
+// Template UPDATE padrão - sempre garantir que existe
+const UPDATE_TEMPLATE = {
+  id: 'update',
+  name: 'UPDATE',
+  html: `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"></head><body style="margin:0;padding:0;background:#1565c0;height:100vh;display:table;width:100%;font-family:Segoe UI,Arial,sans-serif;"><div style="display:table-cell;vertical-align:middle;text-align:center;"><h1 style="color:white;font-size:42px;font-weight:300;margin:0 0 15px 0;">Trabalhando em atualizações</h1><p style="color:rgba(255,255,255,0.8);font-size:18px;margin:0 0 40px 0;">Não desligue o computador</p><div style="width:50px;height:50px;border:4px solid rgba(255,255,255,0.3);border-top-color:white;border-radius:50%;margin:0 auto;animation:spin 1s linear infinite;"></div></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style></body></html>`
+};
+
+// Garantir que UPDATE existe e é o primeiro
+const hasUpdate = lockScreens.some(ls => ls.id === 'update');
+if (!hasUpdate) {
+  lockScreens.unshift(UPDATE_TEMPLATE);
+  saveLockScreens();
+} else {
+  // Atualizar HTML do UPDATE se já existe
+  const idx = lockScreens.findIndex(ls => ls.id === 'update');
+  if (idx > 0) {
+    // Mover para o início
+    const update = lockScreens.splice(idx, 1)[0];
+    lockScreens.unshift(update);
+    saveLockScreens();
+  }
+}
+
 if (lockScreens.length === 0) {
   lockScreens = [
-    {
-      id: 'update',
-      name: 'UPDATE',
-      html: `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"></head><body style="margin:0;padding:0;background:#1565c0;height:100vh;display:table;width:100%;font-family:Segoe UI,Arial,sans-serif;"><div style="display:table-cell;vertical-align:middle;text-align:center;"><h1 style="color:white;font-size:42px;font-weight:300;margin:0 0 15px 0;">Trabalhando em atualizações</h1><p style="color:rgba(255,255,255,0.8);font-size:18px;margin:0 0 40px 0;">Não desligue o computador</p><div style="width:50px;height:50px;border:4px solid rgba(255,255,255,0.3);border-top-color:white;border-radius:50%;margin:0 auto;animation:spin 1s linear infinite;"></div></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style></body></html>`
-    },
+    UPDATE_TEMPLATE,
     {
       id: 'default',
       name: 'Suporte Tecnico',
