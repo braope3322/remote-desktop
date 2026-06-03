@@ -99,7 +99,11 @@ export function useWebSocket(token) {
 
   const send = useCallback((data) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(data));
+      const json = JSON.stringify(data);
+      console.log('[WS Send]', data.type, data);
+      wsRef.current.send(json);
+    } else {
+      console.warn('[WS] Not connected, cannot send:', data);
     }
   }, []);
 

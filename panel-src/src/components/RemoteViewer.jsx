@@ -2,8 +2,7 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
   X, Maximize2, Minimize2, Settings, Lock, Unlock,
-  Upload, Clipboard, Keyboard, Mouse, ZoomIn, ZoomOut,
-  MonitorOff, RotateCcw
+  Upload, Clipboard, Keyboard, Mouse, ZoomIn, ZoomOut
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -34,8 +33,6 @@ export function RemoteViewer({
   const [keyboardActive, setKeyboardActive] = useState(true);
   const [mouseActive, setMouseActive] = useState(true);
   const [zoom, setZoom] = useState(1);
-  const [isDragging, setIsDragging] = useState(false);
-  const lastMoveRef = useRef(0);
 
   // Draw frame on canvas
   useEffect(() => {
@@ -53,91 +50,113 @@ export function RemoteViewer({
     img.src = `data:image/jpeg;base64,${frame}`;
   }, [frame, frameSize]);
 
-  // Get scaled coordinates
-  const getScaledCoords = useCallback((e) => {
+  // Calculate coordinates relative to the actual image
+  const getCoords = (e) => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
 
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
 
-    return {
-      x: (e.clientX - rect.left) * scaleX,
-      y: (e.clientY - rect.top) * scaleY
-    };
-  }, []);
+    // Account for zoom transform
+    const displayWidth = rect.width / zoom;
+    const displayHeight = rect.height / zoom;
 
-  // Mouse handlers - only send move when dragging
-  const handleMouseMove = useCallback((e) => {
-    if (!mouseActive || !isDragging) return;
+    // Get click position relative to canvas center, then adjust for zoom
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
 
-    const now = Date.now();
-    if (now - lastMoveRef.current < 32) return; // ~30fps throttle for drag
-    lastMoveRef.current = now;
+    const offsetX = (e.clientX - centerX) / zoom + displayWidth / 2;
+    const offsetY = (e.clientY - centerY) / zoom + displayHeight / 2;
 
-    const coords = getScaledCoords(e);
-    if (coords) {
-      onMouseMove(coords.x, coords.y, deviceId);
-    }
-  }, [deviceId, mouseActive, isDragging, getScaledCoords, onMouseMove]);
+    // Scale to canvas dimensions
+    const scaleX = canvas.width / displayWidth;
+    const scaleY = canvas.height / displayHeight;
 
-  const handleMouseDown = useCallback((e) => {
+    const x = Math.round(offsetX * scaleX);
+    const y = Math.round(offsetY * scaleY);
+
+    return { x, y };
+  };
+
+  // Mouse click handler
+  const handleClick = (e) => {
     if (!mouseActive) return;
-    e.preventDefault();
-    setIsDragging(true);
 
-    const coords = getScaledCoords(e);
+    const coords = getCoords(e);
     if (!coords) return;
 
     const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
-    const clicks = e.detail || 1;
 
-    onMouseClick(coords.x, coords.y, button, clicks, deviceId);
-  }, [deviceId, mouseActive, getScaledCoords, onMouseClick]);
+    console.log(`[Panel] Click: x=${coords.x}, y=${coords.y}, button=${button}, deviceId=${deviceId}`);
+    onMouseClick(coords.x, coords.y, button, 1, deviceId);
+  };
 
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
-  }, []);
-
-  const handleWheel = useCallback((e) => {
+  // Double click handler
+  const handleDoubleClick = (e) => {
     if (!mouseActive) return;
+
+    const coords = getCoords(e);
+    if (!coords) return;
+
+    console.log(`[Panel] DoubleClick: x=${coords.x}, y=${coords.y}, deviceId=${deviceId}`);
+    onMouseClick(coords.x, coords.y, 'left', 2, deviceId);
+  };
+
+  // Context menu (right click)
+  const handleContextMenu = (e) => {
     e.preventDefault();
+    if (!mouseActive) return;
+
+    const coords = getCoords(e);
+    if (!coords) return;
+
+    console.log(`[Panel] RightClick: x=${coords.x}, y=${coords.y}, deviceId=${deviceId}`);
+    onMouseClick(coords.x, coords.y, 'right', 1, deviceId);
+  };
+
+  // Scroll handler
+  const handleWheel = (e) => {
+    e.preventDefault();
+    if (!mouseActive) return;
 
     const delta = e.deltaY > 0 ? -3 : 3;
+    console.log(`[Panel] Scroll: delta=${delta}, deviceId=${deviceId}`);
     onMouseScroll(delta, deviceId);
-  }, [deviceId, mouseActive, onMouseScroll]);
+  };
 
-  // Keyboard handlers
-  const handleKeyDown = useCallback((e) => {
+  // Keyboard handler
+  const handleKeyDown = (e) => {
     if (!keyboardActive) return;
     e.preventDefault();
+    e.stopPropagation();
 
-    // Check for modifier keys
     const modifiers = [];
     if (e.ctrlKey) modifiers.push('Control');
     if (e.altKey) modifiers.push('Alt');
     if (e.shiftKey) modifiers.push('Shift');
     if (e.metaKey) modifiers.push('Meta');
 
-    // Handle key combinations
-    if (modifiers.length > 0 && e.key !== 'Control' && e.key !== 'Alt' && e.key !== 'Shift' && e.key !== 'Meta') {
-      onKeyCombination([...modifiers, e.key], deviceId);
-    } else if (!['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) {
-      onKeyPress(e.key, deviceId);
-    }
-  }, [deviceId, keyboardActive, onKeyPress, onKeyCombination]);
+    const key = e.key;
 
-  // Focus management for keyboard
+    if (modifiers.length > 0 && !['Control', 'Alt', 'Shift', 'Meta'].includes(key)) {
+      const combo = [...modifiers, key];
+      console.log(`[Panel] KeyCombo: ${combo.join('+')}, deviceId=${deviceId}`);
+      onKeyCombination(combo, deviceId);
+    } else if (!['Control', 'Alt', 'Shift', 'Meta'].includes(key)) {
+      console.log(`[Panel] KeyPress: ${key}, deviceId=${deviceId}`);
+      onKeyPress(key, deviceId);
+    }
+  };
+
+  // Focus container on mount and when keyboard is activated
   useEffect(() => {
-    const container = containerRef.current;
-    if (container && keyboardActive) {
-      container.focus();
+    if (containerRef.current && keyboardActive) {
+      containerRef.current.focus();
     }
   }, [keyboardActive]);
 
   // Fullscreen toggle
-  const toggleFullscreen = useCallback(() => {
+  const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
       containerRef.current?.requestFullscreen();
       setIsFullscreen(true);
@@ -145,23 +164,16 @@ export function RemoteViewer({
       document.exitFullscreen();
       setIsFullscreen(false);
     }
-  }, []);
+  };
 
-  // Quality preset change
+  // Quality change
   const handleQualityChange = (preset) => {
     let q, s;
     switch (preset) {
-      case 'low':
-        q = 40; s = 0.5;
-        break;
-      case 'medium':
-        q = 70; s = 0.75;
-        break;
-      case 'high':
-        q = 90; s = 1;
-        break;
-      default:
-        q = 70; s = 0.75;
+      case 'low': q = 40; s = 0.5; break;
+      case 'medium': q = 70; s = 0.75; break;
+      case 'high': q = 90; s = 1; break;
+      default: q = 70; s = 0.75;
     }
     setQuality(q);
     setScale(s);
@@ -214,150 +226,112 @@ export function RemoteViewer({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex flex-col"
+      className="fixed inset-0 z-50 bg-black/95 flex flex-col"
     >
       {/* Header */}
-      <div className="h-14 glass border-b border-white/10 flex items-center justify-between px-4">
+      <div className="h-14 bg-zinc-900 border-b border-white/10 flex items-center justify-between px-4">
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-            </span>
-            <span className="text-white font-medium">{deviceName}</span>
-            <span className="text-white/40 text-sm font-mono">({deviceId})</span>
-          </div>
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+          </span>
+          <span className="text-white font-medium">{deviceName}</span>
+          <span className="text-white/40 text-sm font-mono">({deviceId})</span>
         </div>
 
         <div className="flex items-center gap-1">
-          {/* Keyboard toggle */}
           <button
             onClick={() => setKeyboardActive(!keyboardActive)}
             className={cn(
               "p-2 rounded-lg transition-colors",
               keyboardActive ? "bg-blue-500/20 text-blue-400" : "hover:bg-white/10 text-white/50"
             )}
-            title={keyboardActive ? "Teclado ativo" : "Teclado desativado"}
+            title="Teclado"
           >
             <Keyboard className="w-4 h-4" />
           </button>
 
-          {/* Mouse toggle */}
           <button
             onClick={() => setMouseActive(!mouseActive)}
             className={cn(
               "p-2 rounded-lg transition-colors",
               mouseActive ? "bg-blue-500/20 text-blue-400" : "hover:bg-white/10 text-white/50"
             )}
-            title={mouseActive ? "Mouse ativo" : "Mouse desativado"}
+            title="Mouse"
           >
             <Mouse className="w-4 h-4" />
           </button>
 
           <div className="w-px h-6 bg-white/10 mx-1" />
 
-          {/* Zoom controls */}
           <button
             onClick={() => setZoom(z => Math.max(0.5, z - 0.25))}
-            className="p-2 hover:bg-white/10 rounded-lg text-white/50 hover:text-white transition-colors"
+            className="p-2 hover:bg-white/10 rounded-lg text-white/50 hover:text-white"
           >
             <ZoomOut className="w-4 h-4" />
           </button>
           <span className="text-white/50 text-sm w-12 text-center">{Math.round(zoom * 100)}%</span>
           <button
             onClick={() => setZoom(z => Math.min(2, z + 0.25))}
-            className="p-2 hover:bg-white/10 rounded-lg text-white/50 hover:text-white transition-colors"
+            className="p-2 hover:bg-white/10 rounded-lg text-white/50 hover:text-white"
           >
             <ZoomIn className="w-4 h-4" />
           </button>
 
           <div className="w-px h-6 bg-white/10 mx-1" />
 
-          {/* Lock screen */}
           <button
             onClick={handleLockToggle}
             className={cn(
               "p-2 rounded-lg transition-colors",
-              isLocked ? "bg-amber-500/20 text-amber-400" : "hover:bg-white/10 text-white/50 hover:text-white"
+              isLocked ? "bg-amber-500/20 text-amber-400" : "hover:bg-white/10 text-white/50"
             )}
-            title={isLocked ? "Desbloquear tela" : "Bloquear tela"}
+            title="Bloquear tela"
           >
             {isLocked ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
           </button>
 
-          {/* Clipboard */}
-          <button
-            onClick={handleClipboard}
-            className="p-2 hover:bg-white/10 rounded-lg text-white/50 hover:text-white transition-colors"
-            title="Enviar clipboard"
-          >
+          <button onClick={handleClipboard} className="p-2 hover:bg-white/10 rounded-lg text-white/50 hover:text-white" title="Clipboard">
             <Clipboard className="w-4 h-4" />
           </button>
 
-          {/* File upload */}
-          <button
-            onClick={handleFileUpload}
-            className="p-2 hover:bg-white/10 rounded-lg text-white/50 hover:text-white transition-colors"
-            title="Enviar arquivo"
-          >
+          <button onClick={handleFileUpload} className="p-2 hover:bg-white/10 rounded-lg text-white/50 hover:text-white" title="Upload">
             <Upload className="w-4 h-4" />
           </button>
 
-          {/* Settings */}
           <div className="relative">
             <button
               onClick={() => setShowSettings(!showSettings)}
-              className="p-2 hover:bg-white/10 rounded-lg text-white/50 hover:text-white transition-colors"
+              className="p-2 hover:bg-white/10 rounded-lg text-white/50 hover:text-white"
             >
               <Settings className="w-4 h-4" />
             </button>
 
             {showSettings && (
-              <motion.div
-                initial={{ opacity: 0, y: -5 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="absolute right-0 top-full mt-2 w-48 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-xl overflow-hidden"
-              >
+              <div className="absolute right-0 top-full mt-2 w-48 bg-zinc-900 border border-white/10 rounded-xl shadow-xl overflow-hidden z-50">
                 <div className="p-2 border-b border-white/10">
                   <span className="text-xs text-white/40 px-2">Qualidade</span>
                 </div>
-                <button
-                  onClick={() => handleQualityChange('low')}
-                  className="w-full px-4 py-2.5 text-left text-sm text-white/70 hover:bg-white/5"
-                >
-                  Baixa (mais rapido)
+                <button onClick={() => handleQualityChange('low')} className="w-full px-4 py-2.5 text-left text-sm text-white/70 hover:bg-white/5">
+                  Baixa
                 </button>
-                <button
-                  onClick={() => handleQualityChange('medium')}
-                  className="w-full px-4 py-2.5 text-left text-sm text-white/70 hover:bg-white/5"
-                >
+                <button onClick={() => handleQualityChange('medium')} className="w-full px-4 py-2.5 text-left text-sm text-white/70 hover:bg-white/5">
                   Media
                 </button>
-                <button
-                  onClick={() => handleQualityChange('high')}
-                  className="w-full px-4 py-2.5 text-left text-sm text-white/70 hover:bg-white/5"
-                >
-                  Alta (mais lento)
+                <button onClick={() => handleQualityChange('high')} className="w-full px-4 py-2.5 text-left text-sm text-white/70 hover:bg-white/5">
+                  Alta
                 </button>
-              </motion.div>
+              </div>
             )}
           </div>
 
           <div className="w-px h-6 bg-white/10 mx-1" />
 
-          {/* Fullscreen */}
-          <button
-            onClick={toggleFullscreen}
-            className="p-2 hover:bg-white/10 rounded-lg text-white/50 hover:text-white transition-colors"
-          >
+          <button onClick={toggleFullscreen} className="p-2 hover:bg-white/10 rounded-lg text-white/50 hover:text-white">
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
 
-          {/* Close */}
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-red-500/20 rounded-lg text-white/50 hover:text-red-400 transition-colors"
-          >
+          <button onClick={onClose} className="p-2 hover:bg-red-500/20 rounded-lg text-white/50 hover:text-red-400">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -367,24 +341,24 @@ export function RemoteViewer({
       <div
         ref={containerRef}
         tabIndex={0}
-        className="flex-1 overflow-auto flex items-center justify-center p-4 outline-none"
+        className="flex-1 overflow-auto flex items-center justify-center p-4 outline-none bg-black"
         onKeyDown={handleKeyDown}
+        style={{ cursor: mouseActive ? 'crosshair' : 'default' }}
       >
         {frame ? (
           <canvas
             ref={canvasRef}
-            className="max-w-full max-h-full rounded-lg shadow-2xl"
+            className="rounded-lg shadow-2xl"
             style={{
               transform: `scale(${zoom})`,
               transformOrigin: 'center center',
-              cursor: mouseActive ? 'crosshair' : 'default'
+              maxWidth: '100%',
+              maxHeight: '100%'
             }}
-            onMouseMove={handleMouseMove}
-            onMouseDown={handleMouseDown}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
+            onClick={handleClick}
+            onDoubleClick={handleDoubleClick}
+            onContextMenu={handleContextMenu}
             onWheel={handleWheel}
-            onContextMenu={(e) => e.preventDefault()}
           />
         ) : (
           <div className="flex flex-col items-center gap-4 text-white/40">
@@ -395,11 +369,10 @@ export function RemoteViewer({
       </div>
 
       {/* Status bar */}
-      <div className="h-8 glass border-t border-white/10 flex items-center justify-between px-4 text-xs text-white/40">
+      <div className="h-8 bg-zinc-900 border-t border-white/10 flex items-center justify-between px-4 text-xs text-white/40">
         <div className="flex items-center gap-4">
           <span>Resolucao: {frameSize.width}x{frameSize.height}</span>
           <span>Qualidade: {quality}%</span>
-          <span>Escala: {Math.round(scale * 100)}%</span>
         </div>
         <div className="flex items-center gap-4">
           {keyboardActive && <span className="text-blue-400">Teclado ON</span>}
