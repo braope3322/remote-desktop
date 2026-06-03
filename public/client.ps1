@@ -311,15 +311,15 @@ function Start-Client {
                                 Write-Host "  Painel desconectado"
                             }
                             "mouse-move" { Move-MouseTo $msg.x $msg.y }
-                            "mouse-click" { Click-Mouse $msg.x $msg.y $msg.button ($msg.clicks ?? 1) }
+                            "mouse-click" { Click-Mouse $msg.x $msg.y $msg.button $(if ($msg.clicks) { $msg.clicks } else { 1 }) }
                             "mouse-scroll" { Scroll-Mouse $msg.delta }
                             "key-press" { Press-Key $msg.key }
                             "key-combination" { Press-KeyCombo $msg.keys }
-                            "lock-screen" { Show-LockScreen ($msg.message ?? "Aguarde...") }
+                            "lock-screen" { Show-LockScreen $(if ($msg.message) { $msg.message } else { "Aguarde..." }) }
                             "unlock-screen" { Hide-LockScreen }
                             "set-quality" {
-                                $Global:quality = $msg.quality ?? 70
-                                $Global:scale = $msg.scale ?? 0.75
+                                $Global:quality = if ($msg.quality) { $msg.quality } else { 70 }
+                                $Global:scale = if ($msg.scale) { $msg.scale } else { 0.75 }
                             }
                             "disconnect-client" {
                                 Hide-LockScreen
