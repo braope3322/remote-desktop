@@ -113,8 +113,8 @@ $Global:panel = $false
 $Global:locked = $false
 $Global:lockRunspace = $null
 $Global:lockPowershell = $null
-$Global:scale = 0.75
-$Global:quality = 70
+$Global:scale = 0.6
+$Global:quality = 50
 
 $Global:VK = @{
     'Enter'=0x0D;'Backspace'=0x08;'Tab'=0x09;'Escape'=0x1B;'Space'=0x20;' '=0x20
@@ -363,7 +363,7 @@ function Run {
                     }
                 }
 
-                if ($Global:panel -and $ft.ElapsedMilliseconds -ge 100) {
+                if ($Global:panel -and $ft.ElapsedMilliseconds -ge 66) {
                     $ft.Restart()
                     try {
                         $cap = Screen

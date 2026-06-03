@@ -3,7 +3,7 @@ import { Monitor, User, Clock, Wifi, WifiOff, MoreVertical, Trash2, Power, Exter
 import { useState } from 'react';
 import { cn, timeAgo } from '../lib/utils';
 
-export function DeviceCard({ device, onConnect, onRemove, onDisconnect, isConnected }) {
+export function DeviceCard({ device, onConnect, onRemove, onDisconnect }) {
   const [showMenu, setShowMenu] = useState(false);
 
   return (
@@ -16,10 +16,9 @@ export function DeviceCard({ device, onConnect, onRemove, onDisconnect, isConnec
       transition={{ duration: 0.2 }}
       className={cn(
         "glass-card rounded-2xl p-5 relative group cursor-pointer transition-all duration-200",
-        device.online && "hover:shadow-lg hover:shadow-blue-500/5",
-        isConnected && "ring-2 ring-blue-500/50"
+        device.online && "hover:shadow-lg hover:shadow-blue-500/5"
       )}
-      onClick={() => device.online && !isConnected && onConnect(device.id)}
+      onClick={() => device.online && onConnect(device.id)}
     >
       {/* Status indicator */}
       <div className="absolute top-4 right-4 flex items-center gap-2">
@@ -116,7 +115,7 @@ export function DeviceCard({ device, onConnect, onRemove, onDisconnect, isConnec
       </div>
 
       {/* Connect button */}
-      {device.online && !isConnected && (
+      {device.online && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -126,19 +125,6 @@ export function DeviceCard({ device, onConnect, onRemove, onDisconnect, isConnec
             <ExternalLink className="w-4 h-4" />
             Conectar
           </button>
-        </motion.div>
-      )}
-
-      {isConnected && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="mt-4"
-        >
-          <div className="w-full bg-blue-500/20 text-blue-400 font-medium py-2.5 rounded-xl text-center text-sm flex items-center justify-center gap-2">
-            <Wifi className="w-4 h-4" />
-            Conectado
-          </div>
         </motion.div>
       )}
     </motion.div>

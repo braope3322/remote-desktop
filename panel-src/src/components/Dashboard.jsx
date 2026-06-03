@@ -5,36 +5,18 @@ import {
   Grid, List, RefreshCw, Settings, Users
 } from 'lucide-react';
 import { DeviceCard } from './DeviceCard';
-import { RemoteViewer } from './RemoteViewer';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { cn } from '../lib/utils';
 
 export function Dashboard({ token, username, onLogout }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState('grid');
-  const [showViewer, setShowViewer] = useState(false);
-  const [selectedDevice, setSelectedDevice] = useState(null);
 
   const {
     connected,
     devices,
-    currentFrame,
-    frameSize,
-    connectedTo,
-    connectToDevice,
-    disconnectFromDevice,
-    sendMouseMove,
-    sendMouseClick,
-    sendMouseScroll,
-    sendKeyPress,
-    sendKeyCombination,
-    setQuality,
-    lockScreen,
-    unlockScreen,
     disconnectClient,
     removeDevice,
-    uploadFile,
-    setClipboard
   } = useWebSocket(token);
 
   const filteredDevices = devices.filter(device =>
@@ -49,16 +31,17 @@ export function Dashboard({ token, username, onLogout }) {
   const handleConnect = (deviceId) => {
     const device = devices.find(d => d.id === deviceId);
     if (device) {
-      setSelectedDevice(device);
-      connectToDevice(deviceId);
-      setShowViewer(true);
+      // Open in new window
+      const width = 1200;
+      const height = 800;
+      const left = (screen.width - width) / 2;
+      const top = (screen.height - height) / 2;
+      window.open(
+        `/viewer?id=${device.id}&name=${encodeURIComponent(device.hostname)}`,
+        `viewer_${device.id}`,
+        `width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no`
+      );
     }
-  };
-
-  const handleDisconnect = (deviceId) => {
-    disconnectFromDevice(deviceId);
-    setShowViewer(false);
-    setSelectedDevice(null);
   };
 
   const handleLogout = () => {
@@ -207,7 +190,6 @@ export function Dashboard({ token, username, onLogout }) {
                   onConnect={handleConnect}
                   onRemove={removeDevice}
                   onDisconnect={disconnectClient}
-                  isConnected={connectedTo === device.id}
                 />
               ))}
             </AnimatePresence>
@@ -225,28 +207,6 @@ export function Dashboard({ token, username, onLogout }) {
         )}
       </main>
 
-      {/* Remote viewer */}
-      <AnimatePresence>
-        {showViewer && selectedDevice && (
-          <RemoteViewer
-            deviceId={selectedDevice.id}
-            deviceName={selectedDevice.hostname}
-            frame={currentFrame}
-            frameSize={frameSize}
-            onClose={() => handleDisconnect(selectedDevice.id)}
-            onMouseMove={sendMouseMove}
-            onMouseClick={sendMouseClick}
-            onMouseScroll={sendMouseScroll}
-            onKeyPress={sendKeyPress}
-            onKeyCombination={sendKeyCombination}
-            onSetQuality={setQuality}
-            onLockScreen={lockScreen}
-            onUnlockScreen={unlockScreen}
-            onUploadFile={uploadFile}
-            onSetClipboard={setClipboard}
-          />
-        )}
-      </AnimatePresence>
     </div>
   );
 }

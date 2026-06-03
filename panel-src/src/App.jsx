@@ -1,11 +1,15 @@
 import { useState, useEffect } from 'react';
 import { Login } from './components/Login';
 import { Dashboard } from './components/Dashboard';
+import { ViewerWindow } from './components/ViewerWindow';
 
 function App() {
   const [token, setToken] = useState(null);
   const [username, setUsername] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // Check if this is a viewer window
+  const isViewerWindow = window.location.pathname === '/viewer';
 
   useEffect(() => {
     const storedToken = localStorage.getItem('rd_token');
@@ -46,6 +50,11 @@ function App() {
     setToken(null);
     setUsername(null);
   };
+
+  // Viewer window - render directly
+  if (isViewerWindow) {
+    return <ViewerWindow />;
+  }
 
   if (loading) {
     return (
