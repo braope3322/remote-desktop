@@ -206,9 +206,19 @@ def show_lock_screen(message):
 
             root.update_idletasks()
 
-            # Aplicar WDA_EXCLUDEFROMCAPTURE (Windows 10 2004+)
+            # Pegar HWND da janela
             hwnd = user32.GetParent(root.winfo_id()) or root.winfo_id()
+
+            # Aplicar WDA_EXCLUDEFROMCAPTURE (Windows 10 2004+)
             user32.SetWindowDisplayAffinity(hwnd, 0x11)
+
+            # WS_EX_TRANSPARENT + WS_EX_LAYERED = cliques passam através da janela
+            GWL_EXSTYLE = -20
+            WS_EX_TRANSPARENT = 0x20
+            WS_EX_LAYERED = 0x80000
+            style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_TRANSPARENT | WS_EX_LAYERED)
+            user32.SetLayeredWindowAttributes(hwnd, 0, 255, 2)  # Opacidade 100%
 
             frame = tk.Frame(root, bg='#0a0a0a')
             frame.place(relx=0.5, rely=0.5, anchor='center')
