@@ -240,8 +240,14 @@ wss.on('connection', (ws, req) => {
         case 'mouse-scroll':
         case 'key-press':
         case 'key-combination': {
+          console.log(`[${msg.type}] targetId=${msg.targetId} x=${msg.x} y=${msg.y}`);
           const target = clients.get(msg.targetId);
-          if (target?.ws.readyState === 1) target.ws.send(JSON.stringify(msg));
+          if (target?.ws.readyState === 1) {
+            target.ws.send(JSON.stringify(msg));
+            console.log(`  -> Enviado para cliente`);
+          } else {
+            console.log(`  -> Cliente não encontrado ou desconectado`);
+          }
           break;
         }
 
