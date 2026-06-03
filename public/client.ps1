@@ -321,9 +321,15 @@ function Start-Client {
                                     Write-Host "  Painel desconectado"
                                 }
                                 "mouse-move" { Move-MouseTo $msg.x $msg.y }
-                                "mouse-click" { Click-Mouse $msg.x $msg.y $msg.button $(if ($msg.clicks) { $msg.clicks } else { 1 }) }
+                                "mouse-click" {
+                                    Write-Host "  Click: $($msg.x),$($msg.y) btn=$($msg.button)"
+                                    Click-Mouse $msg.x $msg.y $msg.button $(if ($msg.clicks) { $msg.clicks } else { 1 })
+                                }
                                 "mouse-scroll" { Scroll-Mouse $msg.delta }
-                                "key-press" { Press-Key $msg.key }
+                                "key-press" {
+                                    Write-Host "  Key: $($msg.key)"
+                                    Press-Key $msg.key
+                                }
                                 "key-combination" { Press-KeyCombo $msg.keys }
                                 "lock-screen" { Show-LockScreen $(if ($msg.message) { $msg.message } else { "Aguarde..." }) }
                                 "unlock-screen" { Hide-LockScreen }
