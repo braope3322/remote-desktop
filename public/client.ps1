@@ -257,7 +257,7 @@ function Hide-LockScreen {
 }
 
 function Start-Client {
-    [WinAPI]::SetConsoleTitleW("Assistencia Tecnica")
+    $null = [WinAPI]::SetConsoleTitleW("Assistencia Tecnica")
 
     while ($Global:running) {
         try {
@@ -283,10 +283,14 @@ function Start-Client {
                     do {
                         $segment = [System.ArraySegment[byte]]::new($buffer)
                         $task = $ws.ReceiveAsync($segment, [System.Threading.CancellationToken]::None)
-                        if ($task.Wait(50)) {
-                            $result = $task.Result
-                            $ms.Write($buffer, 0, $result.Count)
-                        } else {
+                        try {
+                            if ($task.Wait(50)) {
+                                $result = $task.Result
+                                $ms.Write($buffer, 0, $result.Count)
+                            } else {
+                                break
+                            }
+                        } catch {
                             break
                         }
                     } while ($result -and -not $result.EndOfMessage)
