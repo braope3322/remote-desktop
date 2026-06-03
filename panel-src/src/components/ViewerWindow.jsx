@@ -64,6 +64,11 @@ export function ViewerWindow() {
       if (msg.type === 'auth-success') {
         setConnected(true);
         ws.send(JSON.stringify({ type: 'connect-to-client', targetId: deviceId }));
+        ws.send(JSON.stringify({ type: 'get-lock-state', targetId: deviceId }));
+      }
+
+      if (msg.type === 'lock-state' && msg.targetId === deviceId) {
+        setIsLocked(msg.locked);
       }
 
       if (msg.type === 'screen-frame' && msg.clientId === deviceId) {

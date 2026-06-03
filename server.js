@@ -617,6 +617,11 @@ wss.on('connection', (ws, req) => {
             console.log('[LOCK] Enviando para cliente:', lockMsg.html ? `${lockMsg.html.length} chars` : 'VAZIO');
             target.ws.send(JSON.stringify(lockMsg));
           }
+          // Salvar estado de lock
+          if (allDevices[msg.targetId]) {
+            allDevices[msg.targetId].locked = true;
+            saveDevices();
+          }
           break;
         }
 
@@ -625,6 +630,21 @@ wss.on('connection', (ws, req) => {
           if (target?.ws.readyState === 1) {
             target.ws.send(JSON.stringify({ type: 'unlock-screen' }));
           }
+          // Salvar estado de unlock
+          if (allDevices[msg.targetId]) {
+            allDevices[msg.targetId].locked = false;
+            saveDevices();
+          }
+          break;
+        }
+
+        case 'get-lock-state': {
+          const device = allDevices[msg.targetId];
+          ws.send(JSON.stringify({
+            type: 'lock-state',
+            targetId: msg.targetId,
+            locked: device?.locked || false
+          }));
           break;
         }
 
