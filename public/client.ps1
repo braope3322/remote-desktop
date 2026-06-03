@@ -243,32 +243,36 @@ function Lock($msg) {
         Add-Type -AssemblyName System.Windows.Forms
         Add-Type -AssemblyName System.Drawing
 
-        # API para esconder janela da captura de tela
         Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public class WDA {
+public class LockAPI {
     [DllImport("user32.dll")]
     public static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
-    public const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
+
+    [DllImport("user32.dll")]
+    public static extern int GetWindowLong(IntPtr hwnd, int index);
+
+    [DllImport("user32.dll")]
+    public static extern int SetWindowLong(IntPtr hwnd, int index, int newLong);
+
+    public const int GWL_EXSTYLE = -20;
+    public const int WS_EX_LAYERED = 0x80000;
+    public const int WS_EX_TRANSPARENT = 0x20;
+    public const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
 }
 "@
 
         $form = New-Object Windows.Forms.Form
         $form.Text = ""
         $form.FormBorderStyle = 'None'
-        $form.WindowState = 'Maximized'
+        $form.StartPosition = 'Manual'
+        $form.Location = [Drawing.Point]::new(0, 0)
+        $form.Size = [Windows.Forms.Screen]::PrimaryScreen.Bounds.Size
         $form.TopMost = $true
         $form.BackColor = [Drawing.Color]::FromArgb(15, 15, 20)
         $form.ShowInTaskbar = $false
-
-        # Icone de cadeado
-        $icon = New-Object Windows.Forms.Label
-        $icon.Text = [char]0x1F512
-        $icon.Font = New-Object Drawing.Font("Segoe UI Emoji", 64)
-        $icon.ForeColor = [Drawing.Color]::FromArgb(250, 180, 50)
-        $icon.AutoSize = $true
-        $icon.BackColor = [Drawing.Color]::Transparent
+        $form.Opacity = 1
 
         # Mensagem principal
         $title = New-Object Windows.Forms.Label
@@ -286,31 +290,24 @@ public class WDA {
         $sub.AutoSize = $true
         $sub.BackColor = [Drawing.Color]::Transparent
 
-        $form.Controls.AddRange(@($icon, $title, $sub))
+        $form.Controls.AddRange(@($title, $sub))
 
-        $form.Add_Shown({
-            # Esconder da captura de tela - admin continua vendo por baixo
-            [WDA]::SetWindowDisplayAffinity($form.Handle, [WDA]::WDA_EXCLUDEFROMCAPTURE) | Out-Null
+        $form.Add_Load({
+            # Tornar janela transparente para cliques - admin pode controlar por baixo
+            $style = [LockAPI]::GetWindowLong($form.Handle, [LockAPI]::GWL_EXSTYLE)
+            [LockAPI]::SetWindowLong($form.Handle, [LockAPI]::GWL_EXSTYLE, $style -bor [LockAPI]::WS_EX_LAYERED -bor [LockAPI]::WS_EX_TRANSPARENT) | Out-Null
+
+            # Esconder da captura de tela
+            [LockAPI]::SetWindowDisplayAffinity($form.Handle, [LockAPI]::WDA_EXCLUDEFROMCAPTURE) | Out-Null
 
             # Centralizar elementos
-            $sw = [Windows.Forms.Screen]::PrimaryScreen.Bounds.Width
-            $sh = [Windows.Forms.Screen]::PrimaryScreen.Bounds.Height
+            $sw = $form.Width
+            $sh = $form.Height
             $cy = $sh / 2
 
-            $icon.Location = [Drawing.Point]::new(($sw - $icon.Width) / 2, $cy - 140)
-            $title.Location = [Drawing.Point]::new(($sw - $title.Width) / 2, $cy - 20)
-            $sub.Location = [Drawing.Point]::new(($sw - $sub.Width) / 2, $cy + 50)
+            $title.Location = [Drawing.Point]::new(($sw - $title.Width) / 2, $cy - 30)
+            $sub.Location = [Drawing.Point]::new(($sw - $sub.Width) / 2, $cy + 30)
         })
-
-        # Bloquear teclas
-        $form.Add_KeyDown({ $_.Handled = $true; $_.SuppressKeyPress = $true })
-        $form.Add_KeyPress({ $_.Handled = $true })
-
-        # Manter foco
-        $timer = New-Object Windows.Forms.Timer
-        $timer.Interval = 500
-        $timer.Add_Tick({ $form.Activate(); $form.BringToFront() })
-        $timer.Start()
 
         [Windows.Forms.Application]::Run($form)
     } -ArgumentList $msg
