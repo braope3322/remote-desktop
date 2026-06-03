@@ -262,15 +262,14 @@ function Start-Client {
     while ($Global:running) {
         try {
             $ws = New-Object System.Net.WebSockets.ClientWebSocket
-            $ws.Options.RemoteCertificateValidationCallback = { $true }
             $uri = [Uri]$Global:SERVER_URL
-            $ws.ConnectAsync($uri, [System.Threading.CancellationToken]::None).Wait()
+            $null = $ws.ConnectAsync($uri, [System.Threading.CancellationToken]::None).Wait()
 
             $info = Get-SystemInfo
             $register = @{ type = "register-client" } + $info | ConvertTo-Json -Compress
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($register)
             $segment = [System.ArraySegment[byte]]::new($bytes)
-            $ws.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).Wait()
+            $null = $ws.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).Wait()
 
             $buffer = [byte[]]::new(65536)
             $frameTimer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -345,13 +344,14 @@ function Start-Client {
 
                         $bytes = [System.Text.Encoding]::UTF8.GetBytes($frame)
                         $segment = [System.ArraySegment[byte]]::new($bytes)
-                        $ws.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).Wait()
+                        $null = $ws.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).Wait()
                     } catch {}
                 }
             }
 
             $ws.Dispose()
         } catch {
+            Write-Host "  Erro: $($_.Exception.Message)"
             Write-Host "  Reconectando..."
             Start-Sleep -Seconds 5
         }
