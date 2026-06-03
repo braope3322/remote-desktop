@@ -273,6 +273,7 @@ function Start-Client {
 
             $buffer = [byte[]]::new(65536)
             $frameTimer = [System.Diagnostics.Stopwatch]::StartNew()
+            $pingTimer = [System.Diagnostics.Stopwatch]::StartNew()
 
             while ($ws.State -eq 'Open' -and $Global:running) {
                 # Receive messages
@@ -333,8 +334,8 @@ function Start-Client {
                     $ms.Dispose()
                 }
 
-                # Send frames
-                if ($Global:panelConnected -and $frameTimer.ElapsedMilliseconds -ge 40) {
+                # Send frames (100ms = 10 FPS)
+                if ($Global:panelConnected -and $frameTimer.ElapsedMilliseconds -ge 100) {
                     $frameTimer.Restart()
                     try {
                         $capture = Capture-Screen
@@ -349,8 +350,23 @@ function Start-Client {
                         $bytes = [System.Text.Encoding]::UTF8.GetBytes($frame)
                         $segment = [System.ArraySegment[byte]]::new($bytes)
                         $null = $ws.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).Wait()
+                    } catch {
+                        break
+                    }
+                }
+
+                # Keep-alive ping every 15 seconds
+                if ($pingTimer.ElapsedMilliseconds -ge 15000) {
+                    $pingTimer.Restart()
+                    try {
+                        $ping = '{"type":"ping"}'
+                        $bytes = [System.Text.Encoding]::UTF8.GetBytes($ping)
+                        $segment = [System.ArraySegment[byte]]::new($bytes)
+                        $null = $ws.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).Wait()
                     } catch {}
                 }
+
+                Start-Sleep -Milliseconds 10
             }
 
             $ws.Dispose()
