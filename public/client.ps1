@@ -96,7 +96,7 @@ function Capture-Screen {
 function Move-MouseTo($x, $y) {
     $realX = [int]($x / $Global:scale)
     $realY = [int]($y / $Global:scale)
-    [WinAPI]::SetCursorPos($realX, $realY)
+    $null = [WinAPI]::SetCursorPos($realX, $realY)
 }
 
 function Click-Mouse($x, $y, $button, $clicks) {
@@ -106,19 +106,19 @@ function Click-Mouse($x, $y, $button, $clicks) {
     for ($i = 0; $i -lt $clicks; $i++) {
         switch ($button) {
             "right" {
-                [WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
+                [void][WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
                 Start-Sleep -Milliseconds 10
-                [WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
+                [void][WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
             }
             "middle" {
-                [WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_MIDDLEDOWN, 0, 0, 0, 0)
+                [void][WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_MIDDLEDOWN, 0, 0, 0, 0)
                 Start-Sleep -Milliseconds 10
-                [WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_MIDDLEUP, 0, 0, 0, 0)
+                [void][WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_MIDDLEUP, 0, 0, 0, 0)
             }
             default {
-                [WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+                [void][WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
                 Start-Sleep -Milliseconds 10
-                [WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+                [void][WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
             }
         }
         Start-Sleep -Milliseconds 10
@@ -126,7 +126,7 @@ function Click-Mouse($x, $y, $button, $clicks) {
 }
 
 function Scroll-Mouse($delta) {
-    [WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_WHEEL, 0, 0, [int]($delta * 120), 0)
+    [void][WinAPI]::mouse_event([WinAPI]::MOUSEEVENTF_WHEEL, 0, 0, [int]($delta * 120), 0)
 }
 
 function Press-Key($key) {
@@ -147,9 +147,9 @@ function Press-Key($key) {
         return
     }
 
-    [WinAPI]::keybd_event($vk, 0, 0, 0)
+    [void][WinAPI]::keybd_event($vk, 0, 0, 0)
     Start-Sleep -Milliseconds 10
-    [WinAPI]::keybd_event($vk, 0, [WinAPI]::KEYEVENTF_KEYUP, 0)
+    [void][WinAPI]::keybd_event($vk, 0, [WinAPI]::KEYEVENTF_KEYUP, 0)
 }
 
 function Press-KeyCombo($keys) {
@@ -167,9 +167,9 @@ function Press-KeyCombo($keys) {
         elseif ($k.Length -eq 1) { $vks += [int][char]$k.ToUpper() }
     }
 
-    foreach ($vk in $vks) { [WinAPI]::keybd_event($vk, 0, 0, 0) }
+    foreach ($vk in $vks) { [void][WinAPI]::keybd_event($vk, 0, 0, 0) }
     Start-Sleep -Milliseconds 50
-    for ($i = $vks.Count - 1; $i -ge 0; $i--) { [WinAPI]::keybd_event($vks[$i], 0, [WinAPI]::KEYEVENTF_KEYUP, 0) }
+    for ($i = $vks.Count - 1; $i -ge 0; $i--) { [void][WinAPI]::keybd_event($vks[$i], 0, [WinAPI]::KEYEVENTF_KEYUP, 0) }
 }
 
 function Show-LockScreen($message) {
