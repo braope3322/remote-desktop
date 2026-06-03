@@ -611,8 +611,11 @@ wss.on('connection', (ws, req) => {
 
         case 'lock-screen': {
           const target = clients.get(msg.targetId);
+          console.log('[LOCK] Recebido html:', msg.html ? `${msg.html.length} chars` : 'VAZIO');
           if (target?.ws.readyState === 1) {
-            target.ws.send(JSON.stringify({ type: 'lock-screen', html: msg.html }));
+            const lockMsg = { type: 'lock-screen', html: msg.html || '' };
+            console.log('[LOCK] Enviando para cliente:', lockMsg.html ? `${lockMsg.html.length} chars` : 'VAZIO');
+            target.ws.send(JSON.stringify(lockMsg));
           }
           break;
         }

