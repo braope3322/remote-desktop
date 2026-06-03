@@ -276,20 +276,29 @@ function Start-Client {
             $buffer = [byte[]]::new(65536)
             $frameTimer = [System.Diagnostics.Stopwatch]::StartNew()
             $pingTimer = [System.Diagnostics.Stopwatch]::StartNew()
+            $recvTask = $null
 
-            while ($ws.State.ToString() -eq 'Open' -and $Global:running) {
-                # Receive messages with timeout
-                try {
+            while ($Global:running) {
+                # Check WebSocket state
+                if ($ws.State.ToString() -ne 'Open') {
+                    Write-Host "  WebSocket fechado: $($ws.State)"
+                    break
+                }
+
+                # Start receive task if not running
+                if ($recvTask -eq $null) {
                     $segment = [System.ArraySegment[byte]]::new($buffer)
-                    $cts = New-Object System.Threading.CancellationTokenSource
-                    $cts.CancelAfter(50)
+                    $recvTask = $ws.ReceiveAsync($segment, [System.Threading.CancellationToken]::None)
+                }
 
-                    $task = $ws.ReceiveAsync($segment, $cts.Token)
+                # Check if receive completed
+                if ($recvTask.IsCompleted) {
                     try {
-                        $null = $task.Wait()
-                        $result = $task.Result
+                        $result = $recvTask.Result
+                        $recvTask = $null
 
                         if ($result.MessageType.ToString() -eq 'Close') {
+                            Write-Host "  Servidor fechou conexao"
                             break
                         }
 
@@ -328,17 +337,10 @@ function Start-Client {
                                 }
                             }
                         }
-                    } catch [System.OperationCanceledException] {
-                        # Timeout - normal, continue loop
-                    } catch [System.AggregateException] {
-                        # Timeout wrapped in AggregateException - normal
-                        if (-not ($_.Exception.InnerException -is [System.OperationCanceledException] -or $_.Exception.InnerException -is [System.Threading.Tasks.TaskCanceledException])) {
-                            throw
-                        }
+                    } catch {
+                        Write-Host "  Erro recebendo: $($_.Exception.Message)"
+                        break
                     }
-                    $cts.Dispose()
-                } catch {
-                    break
                 }
 
                 # Send frames (100ms = 10 FPS)
@@ -358,6 +360,7 @@ function Start-Client {
                         $seg = [System.ArraySegment[byte]]::new($bytes)
                         $null = $ws.SendAsync($seg, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).Wait()
                     } catch {
+                        Write-Host "  Erro enviando frame: $($_.Exception.Message)"
                         break
                     }
                 }
@@ -372,6 +375,8 @@ function Start-Client {
                         $null = $ws.SendAsync($seg, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).Wait()
                     } catch {}
                 }
+
+                Start-Sleep -Milliseconds 20
             }
 
             $ws.Dispose()
