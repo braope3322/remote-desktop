@@ -201,11 +201,9 @@ def show_lock_screen(message):
                 if not screen_locked:
                     root.destroy()
                     return
-                root.lift()
-                root.attributes('-topmost', True)
-                root.after(100, check)
+                root.after(500, check)
 
-            root.after(100, check)
+            root.after(500, check)
             root.mainloop()
         except:
             pass
