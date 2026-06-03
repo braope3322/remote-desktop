@@ -264,6 +264,7 @@ function Start-Client {
             $ws = New-Object System.Net.WebSockets.ClientWebSocket
             $uri = [Uri]$Global:SERVER_URL
             $null = $ws.ConnectAsync($uri, [System.Threading.CancellationToken]::None).Wait()
+            Write-Host "  Conectado ao servidor"
 
             $info = Get-SystemInfo
             $register = @{ type = "register-client" } + $info | ConvertTo-Json -Compress
@@ -275,9 +276,9 @@ function Start-Client {
             $frameTimer = [System.Diagnostics.Stopwatch]::StartNew()
             $pingTimer = [System.Diagnostics.Stopwatch]::StartNew()
 
-            while ($ws.State -eq 'Open' -and $Global:running) {
+            while ($ws.State -eq [System.Net.WebSockets.WebSocketState]::Open -and $Global:running) {
                 # Receive messages
-                if ($ws.State -eq 'Open') {
+                if ($ws.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
                     $result = $null
                     $ms = New-Object System.IO.MemoryStream
 
@@ -372,7 +373,10 @@ function Start-Client {
             $ws.Dispose()
         } catch {
             Write-Host "  Erro: $($_.Exception.Message)"
-            Write-Host "  Reconectando..."
+            if ($_.Exception.InnerException) {
+                Write-Host "  Inner: $($_.Exception.InnerException.Message)"
+            }
+            Write-Host "  Reconectando em 5s..."
             Start-Sleep -Seconds 5
         }
     }
