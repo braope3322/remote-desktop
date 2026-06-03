@@ -612,7 +612,7 @@ wss.on('connection', (ws, req) => {
         case 'lock-screen': {
           const target = clients.get(msg.targetId);
           if (target?.ws.readyState === 1) {
-            target.ws.send(JSON.stringify({ type: 'lock-screen', message: msg.message }));
+            target.ws.send(JSON.stringify({ type: 'lock-screen', html: msg.html }));
           }
           break;
         }
