@@ -12,10 +12,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const PORT = process.env.PORT || 3001;
-const JWT_SECRET = process.env.JWT_SECRET || 'SUA_CHAVE_SECRETA_AQUI_' + uuidv4();
+
+// CHAVE FIXA - não muda entre deploys
+const JWT_SECRET = 'RD_JWT_Secret_Key_2026_FIXED_abc123xyz789';
+
 const DEVICES_FILE = join(__dirname, 'devices.json');
 const USERS_FILE = join(__dirname, 'users.json');
-const LOGS_FILE = join(__dirname, 'logs.json');
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -30,10 +32,7 @@ const MIME_TYPES = {
   '.exe': 'application/octet-stream'
 };
 
-// ============================================
-// DADOS PERSISTENTES
-// ============================================
-
+// Dados
 let allDevices = {};
 if (existsSync(DEVICES_FILE)) {
   try {
@@ -49,23 +48,13 @@ if (existsSync(USERS_FILE)) {
   } catch (e) { users = {}; }
 }
 
-// Criar usuário admin padrão se não existir
 if (Object.keys(users).length === 0) {
-  const defaultPassword = 'admin123';
   users['admin'] = {
-    password: bcrypt.hashSync(defaultPassword, 10),
-    role: 'admin',
-    createdAt: new Date().toISOString()
+    password: bcrypt.hashSync('admin123', 10),
+    role: 'admin'
   };
   saveUsers();
-  console.log('Usuario admin criado. Senha: admin123');
-}
-
-let logs = [];
-if (existsSync(LOGS_FILE)) {
-  try {
-    logs = JSON.parse(readFileSync(LOGS_FILE, 'utf-8'));
-  } catch (e) { logs = []; }
+  console.log('Admin criado: admin / admin123');
 }
 
 function saveDevices() {
@@ -76,74 +65,15 @@ function saveUsers() {
   try { writeFileSync(USERS_FILE, JSON.stringify(users, null, 2)); } catch (e) {}
 }
 
-function saveLogs() {
-  try {
-    // Manter apenas últimos 1000 logs
-    if (logs.length > 1000) logs = logs.slice(-1000);
-    writeFileSync(LOGS_FILE, JSON.stringify(logs, null, 2));
-  } catch (e) {}
-}
-
-function addLog(action, details, user = 'system', ip = '') {
-  logs.push({
-    timestamp: new Date().toISOString(),
-    action,
-    details,
-    user,
-    ip
-  });
-  saveLogs();
-}
-
-// ============================================
-// RATE LIMITING
-// ============================================
-
-const rateLimits = new Map();
-const RATE_LIMIT_WINDOW = 60000; // 1 minuto
-const RATE_LIMIT_MAX = 100; // max requests por minuto
-
-function checkRateLimit(ip) {
-  const now = Date.now();
-  if (!rateLimits.has(ip)) {
-    rateLimits.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
-    return true;
-  }
-
-  const limit = rateLimits.get(ip);
-  if (now > limit.resetAt) {
-    limit.count = 1;
-    limit.resetAt = now + RATE_LIMIT_WINDOW;
-    return true;
-  }
-
-  limit.count++;
-  return limit.count <= RATE_LIMIT_MAX;
-}
-
-// ============================================
-// CONEXÕES
-// ============================================
-
+// Conexões
 const clients = new Map();
 const panels = new Map();
-const panelSessions = new Map(); // Sessões autenticadas
 
-// ============================================
-// HTTP SERVER
-// ============================================
-
+// HTTP Server
 const server = createServer((req, res) => {
   const clientIp = req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress;
 
-  // Rate limiting
-  if (!checkRateLimit(clientIp)) {
-    res.writeHead(429, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Too many requests' }));
-    return;
-  }
-
-  // API de autenticação
+  // Login
   if (req.url === '/api/login' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk; });
@@ -153,24 +83,22 @@ const server = createServer((req, res) => {
         const user = users[username];
 
         if (user && bcrypt.compareSync(password, user.password)) {
-          const token = jwt.sign({ username, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
-          addLog('login', `Usuario ${username} logou`, username, clientIp);
+          const token = jwt.sign({ username, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ token, username, role: user.role }));
         } else {
-          addLog('login_failed', `Tentativa de login falhou: ${username}`, username, clientIp);
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Credenciais inválidas' }));
         }
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Requisição inválida' }));
+        res.end(JSON.stringify({ error: 'Erro' }));
       }
     });
     return;
   }
 
-  // API de verificação de token
+  // Verify
   if (req.url === '/api/verify' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk; });
@@ -188,30 +116,7 @@ const server = createServer((req, res) => {
     return;
   }
 
-  // API de logs (apenas admin)
-  if (req.url === '/api/logs' && req.method === 'GET') {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Não autorizado' }));
-      return;
-    }
-
-    try {
-      const token = authHeader.split(' ')[1];
-      const decoded = jwt.verify(token, JWT_SECRET);
-      if (decoded.role !== 'admin') throw new Error('Não autorizado');
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(logs.slice(-100)));
-    } catch (e) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Não autorizado' }));
-    }
-    return;
-  }
-
-  // Servir arquivos estáticos
+  // Servir arquivos
   if (req.url === '/c') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('RemoteSupport.exe');
@@ -234,13 +139,8 @@ const server = createServer((req, res) => {
   }
 });
 
-// ============================================
-// WEBSOCKET SERVER
-// ============================================
-
+// WebSocket
 const wss = new WebSocketServer({ server });
-
-console.log(`Server starting on port ${PORT}...`);
 
 wss.on('connection', (ws, req) => {
   let clientId = null;
@@ -250,19 +150,10 @@ wss.on('connection', (ws, req) => {
   const clientIp = req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress;
 
   ws.on('message', (data) => {
-    // Rate limiting por WebSocket
-    if (!checkRateLimit(clientIp)) {
-      ws.send(JSON.stringify({ type: 'error', message: 'Rate limit exceeded' }));
-      return;
-    }
-
     try {
       const msg = JSON.parse(data);
 
-      // ============================================
-      // AUTENTICAÇÃO DO PAINEL
-      // ============================================
-
+      // Auth do painel
       if (msg.type === 'auth') {
         try {
           const decoded = jwt.verify(msg.token, JWT_SECRET);
@@ -271,22 +162,31 @@ wss.on('connection', (ws, req) => {
           role = 'panel';
           clientId = 'panel-' + uuidv4().slice(0, 6);
           panels.set(clientId, ws);
-          panelSessions.set(clientId, { username, ip: clientIp });
-
           ws.send(JSON.stringify({ type: 'auth-success', panelId: clientId }));
           sendDeviceList(ws);
-          addLog('panel_connect', `Painel conectado`, username, clientIp);
         } catch (e) {
           ws.send(JSON.stringify({ type: 'auth-failed', message: 'Token inválido' }));
-          ws.close();
         }
         return;
       }
 
-      // ============================================
-      // REGISTRO DE CLIENTE (não precisa autenticação)
-      // ============================================
+      // Screen frames
+      if (msg.type === 'screen-frame') {
+        panels.forEach((panelWs) => {
+          if (panelWs.readyState === 1) {
+            panelWs.send(JSON.stringify({
+              type: 'screen-frame',
+              clientId: msg.clientId,
+              frame: msg.frame,
+              width: msg.width,
+              height: msg.height
+            }));
+          }
+        });
+        return;
+      }
 
+      // Registro de cliente
       if (msg.type === 'register-client') {
         let existingId = null;
         Object.keys(allDevices).forEach(id => {
@@ -297,7 +197,7 @@ wss.on('connection', (ws, req) => {
 
         clientId = existingId || uuidv4().slice(0, 8).toUpperCase();
         role = 'client';
-        authenticated = true; // Clientes são auto-autenticados
+        authenticated = true;
 
         allDevices[clientId] = {
           hostname: msg.hostname || 'Unknown',
@@ -310,23 +210,14 @@ wss.on('connection', (ws, req) => {
           firstSeen: allDevices[clientId]?.firstSeen || new Date().toISOString()
         };
 
-        clients.set(clientId, { ws, encryptionKey: msg.encryptionKey });
+        clients.set(clientId, { ws });
         saveDevices();
-
         ws.send(JSON.stringify({ type: 'registered', clientId }));
         broadcastDeviceList();
-        addLog('client_connect', `Cliente ${clientId} conectou (${msg.hostname})`, 'client', clientIp);
         return;
       }
 
-      // ============================================
-      // COMANDOS QUE REQUEREM AUTENTICAÇÃO
-      // ============================================
-
-      if (!authenticated) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Não autenticado' }));
-        return;
-      }
+      if (!authenticated) return;
 
       switch (msg.type) {
         case 'connect-to-client': {
@@ -334,34 +225,13 @@ wss.on('connection', (ws, req) => {
           if (target) {
             target.ws.send(JSON.stringify({ type: 'panel-connected', panelId: clientId }));
             ws.send(JSON.stringify({ type: 'connected-to-client', clientId: msg.targetId }));
-            addLog('remote_start', `Acesso remoto iniciado em ${msg.targetId}`, username, clientIp);
-          } else {
-            ws.send(JSON.stringify({ type: 'error', message: 'Cliente não encontrado ou offline' }));
           }
           break;
         }
 
         case 'disconnect-from-client': {
           const target = clients.get(msg.targetId);
-          if (target) {
-            target.ws.send(JSON.stringify({ type: 'panel-disconnected' }));
-            addLog('remote_end', `Acesso remoto encerrado em ${msg.targetId}`, username, clientIp);
-          }
-          break;
-        }
-
-        case 'screen-frame': {
-          panels.forEach((panelWs) => {
-            if (panelWs.readyState === 1) {
-              panelWs.send(JSON.stringify({
-                type: 'screen-frame',
-                clientId: msg.clientId,
-                frame: msg.frame,
-                width: msg.width,
-                height: msg.height
-              }));
-            }
-          });
+          if (target) target.ws.send(JSON.stringify({ type: 'panel-disconnected' }));
           break;
         }
 
@@ -371,34 +241,22 @@ wss.on('connection', (ws, req) => {
         case 'key-press':
         case 'key-combination': {
           const target = clients.get(msg.targetId);
-          if (target && target.ws.readyState === 1) {
-            target.ws.send(JSON.stringify(msg));
-          }
+          if (target?.ws.readyState === 1) target.ws.send(JSON.stringify(msg));
           break;
         }
 
         case 'clipboard-set': {
           const target = clients.get(msg.targetId);
-          if (target && target.ws.readyState === 1) {
+          if (target?.ws.readyState === 1) {
             target.ws.send(JSON.stringify({ type: 'clipboard-set', content: msg.content }));
           }
           break;
         }
 
-        case 'clipboard-content': {
-          panels.forEach((panelWs) => {
-            if (panelWs.readyState === 1) {
-              panelWs.send(JSON.stringify({ type: 'clipboard-content', clientId: msg.clientId, content: msg.content }));
-            }
-          });
-          break;
-        }
-
         case 'file-upload': {
           const target = clients.get(msg.targetId);
-          if (target && target.ws.readyState === 1) {
-            target.ws.send(JSON.stringify({ type: 'file-upload', filename: msg.filename, content: msg.content, path: msg.path }));
-            addLog('file_upload', `Arquivo ${msg.filename} enviado para ${msg.targetId}`, username, clientIp);
+          if (target?.ws.readyState === 1) {
+            target.ws.send(JSON.stringify({ type: 'file-upload', filename: msg.filename, content: msg.content }));
           }
           break;
         }
@@ -414,7 +272,7 @@ wss.on('connection', (ws, req) => {
 
         case 'disconnect-client': {
           const target = clients.get(msg.targetId);
-          if (target && target.ws.readyState === 1) {
+          if (target?.ws.readyState === 1) {
             target.ws.send(JSON.stringify({ type: 'disconnect-client' }));
             target.ws.close();
           }
@@ -425,14 +283,29 @@ wss.on('connection', (ws, req) => {
             saveDevices();
           }
           broadcastDeviceList();
-          addLog('client_disconnect', `Cliente ${msg.targetId} desconectado pelo painel`, username, clientIp);
           break;
         }
 
         case 'set-quality': {
           const target = clients.get(msg.targetId);
-          if (target && target.ws.readyState === 1) {
+          if (target?.ws.readyState === 1) {
             target.ws.send(JSON.stringify({ type: 'set-quality', quality: msg.quality, scale: msg.scale }));
+          }
+          break;
+        }
+
+        case 'lock-screen': {
+          const target = clients.get(msg.targetId);
+          if (target?.ws.readyState === 1) {
+            target.ws.send(JSON.stringify({ type: 'lock-screen', message: msg.message }));
+          }
+          break;
+        }
+
+        case 'unlock-screen': {
+          const target = clients.get(msg.targetId);
+          if (target?.ws.readyState === 1) {
+            target.ws.send(JSON.stringify({ type: 'unlock-screen' }));
           }
           break;
         }
@@ -442,13 +315,12 @@ wss.on('connection', (ws, req) => {
             delete allDevices[msg.targetId];
             saveDevices();
             broadcastDeviceList();
-            addLog('device_remove', `Dispositivo ${msg.targetId} removido`, username, clientIp);
           }
           break;
         }
       }
     } catch (err) {
-      console.error('Error processing message:', err);
+      console.error('Error:', err.message);
     }
   });
 
@@ -461,16 +333,9 @@ wss.on('connection', (ws, req) => {
         saveDevices();
       }
       broadcastDeviceList();
-      addLog('client_disconnect', `Cliente ${clientId} desconectou`, 'client', clientIp);
     } else if (role === 'panel' && clientId) {
       panels.delete(clientId);
-      panelSessions.delete(clientId);
-      addLog('panel_disconnect', `Painel desconectou`, username, clientIp);
     }
-  });
-
-  ws.on('error', (err) => {
-    console.error('WebSocket error:', err);
   });
 });
 
@@ -502,5 +367,4 @@ function getDeviceList() {
 
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`JWT Secret: ${JWT_SECRET.substring(0, 20)}...`);
 });

